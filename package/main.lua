@@ -81,6 +81,7 @@ local S = {
   app = "",
   cover_version = nil,
   cover_loaded_version = nil,
+  cover_ready = true,
   cover_data = nil,
   cover_inflight = false,
   cover_retry_ms = 0,
@@ -911,6 +912,9 @@ local function handle_state(doc)
   if doc.cover_version ~= nil then
     S.cover_version = tonumber(doc.cover_version) or S.cover_version
   end
+  if doc.cover_ready ~= nil then
+    S.cover_ready = doc.cover_ready == true
+  end
   S.last_seen_ms = now_ms()
   S.status = "LIVE"
   S.status_color = C.gpu
@@ -1062,9 +1066,14 @@ local function fetch_cover()
     if raw and #raw >= COVER_SIZE * COVER_SIZE * 2 then
       S.cover_data = raw
       S.cover_loaded_version = S.cover_version
+      S.cover_ready = true
+      redraw()
+    elseif S.cover_ready then
+      S.cover_data = nil
+      S.cover_loaded_version = S.cover_version
       redraw()
     else
-      S.cover_retry_ms = now_ms() + 5000
+      S.cover_retry_ms = now_ms() + 250
     end
   end)
 end
@@ -1351,6 +1360,7 @@ if PcWeb and PcWeb.new then
       return {
         cover_version = S.cover_version,
         cover_loaded = S.cover_loaded_version,
+        cover_ready = S.cover_ready,
         cover_bytes = #(S.cover_data or ""),
         cover_inflight = S.cover_inflight,
         app_status = S.status,

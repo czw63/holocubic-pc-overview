@@ -106,11 +106,14 @@ $script:State = @{
     album = ""
     app = ""
     cover_version = 0
+    cover_ready = $true
     cover_error = ""
 }
 
 $script:LastMediaKey = ""
 $script:CoverVersion = 0
+$script:CoverDirty = $false
+$script:MediaPath = ""
 $script:LastError = ""
 $script:LastPrint = 0
 $script:LastMetricsMs = 0
@@ -118,6 +121,15 @@ $script:LastStateKey = ""
 $script:LastStateSentMs = 0
 $script:CoverError = ""
 $script:SaltPluginUrl = $SaltPluginUrl
+$script:MetricsFile = Join-Path $env:TEMP "spw-pc-overview-metrics.txt"
+$script:MetricsStopFile = Join-Path $env:TEMP "spw-pc-overview-metrics.stop"
+$script:Metrics = $null
+try {
+    $script:Metrics = New-Object PcBridgeServer.FastMetrics
+} catch {
+    $script:Metrics = $null
+}
+$script:MetricsSampler = $null
 
 function Write-BridgeDebug($message) {
     try {
@@ -125,35 +137,6 @@ function Write-BridgeDebug($message) {
         Add-Content -LiteralPath $debugPath -Value (
             (Get-Date -Format "HH:mm:ss.fff") + " " + $message) -Encoding UTF8
     } catch {
-    }
-}
-
-function Get-CpuGpuUsage {
-    try {
-        $samples = Get-Counter `
-            "\Processor(_Total)\% Processor Time", `
-            "\GPU Engine(*)\Utilization Percentage" `
-            -SampleInterval 1 -MaxSamples 1 -ErrorAction Stop
-        $cpuSample = $samples.CounterSamples |
-            Where-Object { $_.Path -like "*Processor(_Total)*" } | Select-Object -First 1
-        $cpu = $null
-        if ($cpuSample) { $cpu = [double]$cpuSample.CookedValue }
-        $gpuSamples = $samples.CounterSamples |
-            Where-Object { $_.Path -like "*GPU Engine*" }
-        $gpu = $null
-        if ($gpuSamples) {
-            $gpu = [double](($gpuSamples | Measure-Object -Property CookedValue -Sum).Sum)
-            if ($gpu -gt 100) { $gpu = 100 }
-        }
-        return @{ cpu = $cpu; gpu = $gpu }
-    } catch {
-        try {
-            $cpuSample = (Get-Counter "\Processor(_Total)\% Processor Time" `
-                -SampleInterval 1 -MaxSamples 1 -ErrorAction Stop).CounterSamples[0]
-            return @{ cpu = [double]$cpuSample.CookedValue; gpu = $null }
-        } catch {
-            return @{ cpu = $null; gpu = $null }
-        }
     }
 }
 
@@ -426,13 +409,73 @@ if ($SelfTest) {
     }
 }
 
-function Update-SystemMetrics {
-    $usage = Get-CpuGpuUsage
-    if ($null -ne $usage.cpu) {
-        $script:State.cpu = [math]::Round($usage.cpu)
+function Start-MetricsSampler {
+    if ($script:Metrics) { return }
+    if ($script:MetricsSampler -and -not $script:MetricsSampler.HasExited) { return }
+    try {
+        Remove-Item -LiteralPath $script:MetricsStopFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $script:MetricsFile -Force -ErrorAction SilentlyContinue
+        $samplerPath = Join-Path $script:Dir "metrics_sampler.ps1"
+        if (-not (Test-Path -LiteralPath $samplerPath)) { return }
+        $script:MetricsSampler = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $samplerPath,
+                "-OutputFile", $script:MetricsFile,
+                "-StopFile", $script:MetricsStopFile
+            ) -WindowStyle Hidden -PassThru
+    } catch {
+        $script:MetricsSampler = $null
     }
-    if ($null -ne $usage.gpu) {
-        $script:State.gpu = [math]::Round($usage.gpu)
+}
+
+function Read-MetricsFile {
+    try {
+        if (-not (Test-Path -LiteralPath $script:MetricsFile)) { return $null }
+        $age = (Get-Date) - (Get-Item -LiteralPath $script:MetricsFile).LastWriteTime
+        if ($age.TotalSeconds -gt 5) { return $null }
+        $line = Get-Content -LiteralPath $script:MetricsFile -Raw -ErrorAction Stop
+        $values = @{}
+        foreach ($token in ($line -split "\s+")) {
+            $pair = $token -split "=", 2
+            if ($pair.Count -eq 2 -and $pair[1] -ne "") {
+                $values[$pair[0]] = [double]$pair[1]
+            }
+        }
+        return $values
+    } catch {
+        return $null
+    }
+}
+
+function Update-SystemMetrics {
+    Start-MetricsSampler
+    if ($script:Metrics) {
+        try {
+            $cpu = $script:Metrics.CpuPercent()
+            if (-not [double]::IsNaN($cpu)) {
+                $script:State.cpu = [math]::Round($cpu)
+            }
+        } catch {
+        }
+        try {
+            $gpu = $script:Metrics.GpuPercent()
+            if (-not [double]::IsNaN($gpu)) {
+                $script:State.gpu = [math]::Round($gpu)
+            }
+        } catch {
+        }
+    } else {
+        $sampled = Read-MetricsFile
+        if ($sampled) {
+            if ($sampled.ContainsKey("cpu")) {
+                $script:State.cpu = [math]::Round($sampled["cpu"])
+            }
+            if ($sampled.ContainsKey("gpu")) {
+                $script:State.gpu = [math]::Round($sampled["gpu"])
+            }
+        }
     }
     $mem = Get-MemoryUsage
     if ($null -ne $mem.pct) {
@@ -458,37 +501,10 @@ function Update-Media {
         if ($key -ne $script:LastMediaKey) {
             $script:LastMediaKey = $key
             $script:CoverVersion++
+            $script:CoverDirty = $true
+            $script:MediaPath = [string]$media.path
+            $script:State.cover_ready = $false
             Write-BridgeDebug ("media change title=" + $media.title + " artist=" + $media.artist)
-            $cover = $null
-            if ($media.path) {
-                $coverSw = [System.Diagnostics.Stopwatch]::StartNew()
-                $cover = Get-CoverBytesFromPlugin
-                if (-not $cover) {
-                    $cover = Get-CoverBytesFromFile $media.path
-                }
-                if (-not $cover) {
-                    $cover = Get-CoverRgb565FromFile $media.path
-                }
-                $coverSw.Stop()
-                Write-BridgeDebug ("cover_ms=" + $coverSw.ElapsedMilliseconds + " ok=" + [bool]$cover)
-            }
-            if (-not $cover -and $media.thumbnail) {
-                $cover = Get-ThumbnailBytes $media.thumbnail
-            }
-            if ($cover) {
-                try {
-                    $server.SetCoverJpeg($cover, ([string]$script:CoverVersion), $CoverSize)
-                    $script:State.cover_error = ""
-                } catch {
-                    $script:State.cover_error = "SetCoverJpeg failed: " + $_.Exception.Message
-                    $server.SetCover($null, ([string]$script:CoverVersion))
-                }
-            } else {
-                $script:State.cover_error = $script:CoverError
-                $server.SetCover($null, ([string]$script:CoverVersion))
-            }
-        } else {
-            $script:State.cover_error = $script:CoverError
         }
         $script:State.title = $media.title
         $script:State.artist = $media.artist
@@ -506,7 +522,9 @@ function Update-Media {
         if ($script:LastMediaKey -ne "") {
             $script:LastMediaKey = ""
             $script:CoverVersion++
-            $server.SetCover($null, ([string]$script:CoverVersion))
+            $script:CoverDirty = $true
+            $script:MediaPath = ""
+            $script:State.cover_ready = $false
         }
         $script:State.title = ""
         $script:State.artist = ""
@@ -518,6 +536,72 @@ function Update-Media {
     $script:State.cover_version = $script:CoverVersion
 }
 
+function Resolve-Cover {
+    if (-not $script:CoverDirty) { return }
+    $script:CoverDirty = $false
+    $coverSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $cover = $null
+    $path = $script:MediaPath
+    if ($path) {
+        $cover = Get-CoverBytesFromPlugin
+        if (-not $cover) {
+            $cover = Get-CoverBytesFromFile $path
+        }
+        if (-not $cover) {
+            $cover = Get-CoverRgb565FromFile $path
+        }
+    }
+    if (-not $cover) {
+        $snap = Get-MediaSnapshot
+        if ($snap -and $snap.thumbnail) {
+            $cover = Get-ThumbnailBytes $snap.thumbnail
+        }
+    }
+    if ($cover) {
+        try {
+            $server.SetCoverJpeg($cover, ([string]$script:CoverVersion), $CoverSize)
+            $script:State.cover_error = ""
+        } catch {
+            $script:State.cover_error = "SetCoverJpeg failed: " + $_.Exception.Message
+            $server.SetCover($null, ([string]$script:CoverVersion))
+        }
+    } else {
+        $script:State.cover_error = $script:CoverError
+        $server.SetCover($null, ([string]$script:CoverVersion))
+    }
+    $script:State.cover_ready = $true
+    $coverSw.Stop()
+    Write-BridgeDebug ("cover_ms=" + $coverSw.ElapsedMilliseconds +
+        " ok=" + [bool]$cover + " path=" + $path)
+}
+
+function Push-State {
+    $now = [Environment]::TickCount
+    $stateKey = [string]::Join("|", @(
+        [string]$script:State.title,
+        [string]$script:State.artist,
+        [string]$script:State.album,
+        [string]$script:State.app,
+        [string]$script:State.status,
+        [string]$script:State.playing,
+        [string]$script:State.cover_version,
+        [string]$script:State.cover_ready,
+        [string]$script:State.cpu,
+        [string]$script:State.gpu,
+        [string]$script:State.mem,
+        [string]$script:State.mem_used,
+        [string]$script:State.mem_total
+    ))
+    if ($stateKey -ne $script:LastStateKey -or
+        ($now - $script:LastStateSentMs -gt 1000)) {
+        $script:LastStateKey = $stateKey
+        $script:LastStateSentMs = $now
+        $script:State.ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        $json = $script:State | ConvertTo-Json -Compress -Depth 4
+        $server.SetState($json)
+    }
+}
+
 Write-Host ("PC Overview bridge listening on 0.0.0.0:" + $Port)
 Write-Host "Open http://localhost:$Port/ to verify."
 
@@ -525,33 +609,16 @@ try {
     while ($true) {
         try {
             Update-Media
+            Push-State
+            if ($script:CoverDirty) {
+                Resolve-Cover
+            }
             $now = [Environment]::TickCount
             if ($script:LastMetricsMs -eq 0 -or ($now - $script:LastMetricsMs -gt 1000)) {
                 Update-SystemMetrics
                 $script:LastMetricsMs = $now
             }
-            $stateKey = [string]::Join("|", @(
-                [string]$script:State.title,
-                [string]$script:State.artist,
-                [string]$script:State.album,
-                [string]$script:State.app,
-                [string]$script:State.status,
-                [string]$script:State.playing,
-                [string]$script:State.cover_version,
-                [string]$script:State.cpu,
-                [string]$script:State.gpu,
-                [string]$script:State.mem,
-                [string]$script:State.mem_used,
-                [string]$script:State.mem_total
-            ))
-            if ($stateKey -ne $script:LastStateKey -or
-                ($now - $script:LastStateSentMs -gt 1000)) {
-                $script:LastStateKey = $stateKey
-                $script:LastStateSentMs = $now
-                $script:State.ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-                $json = $script:State | ConvertTo-Json -Compress -Depth 4
-                $server.SetState($json)
-            }
+            Push-State
 
             if ($now - $script:LastPrint -gt 10000) {
                 $script:LastPrint = $now
@@ -569,11 +636,18 @@ try {
         } catch {
             Write-Host ("poll error: " + $_.Exception.Message)
         }
-        $woke = $script:SaltMediaEvent.WaitOne(250)
+        $woke = $script:SaltMediaEvent.WaitOne(100)
         if ($woke) {
             Write-BridgeDebug "event wake"
         }
     }
 } finally {
+    try {
+        if ($script:MetricsSampler -and -not $script:MetricsSampler.HasExited) {
+            $script:MetricsSampler.Kill()
+            $script:MetricsSampler.WaitForExit(2000)
+        }
+    } catch {
+    }
     $server.Stop()
 }

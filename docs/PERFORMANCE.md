@@ -26,8 +26,15 @@ strategy as the built-in HoloCubic Spectrum app, which redraws a full
 
 ## PC Bridge Timing
 
-- Media SMTC poll: 250 ms
-- System metrics poll: 1000 ms
+- Media poll fallback: 100 ms; SPW track-change events wake the loop immediately
+- Media text push: happens before cover resolution, so the title switches even
+  while a large or missing cover is still being resolved
+- Cover resolution: SPW plugin/JAudioTagger first, file fallback, then SMTC
+  thumbnail; the device retries a pending cover every 250 ms and only clears
+  the old cover after the bridge reports the new cover as resolved
+- System metrics poll: 1000 ms, sampled with lightweight PerformanceCounter
+  handles, or with a hidden background sampler process when the counter API is
+  unavailable; the bridge loop never blocks on `Get-Counter`
 - Spectrum FFT: log-spaced Goertzel bins over 1024 samples
 - Spectrum send throttle: at most one datagram every 20 ms
 - Process target: Salt Player for Windows process tree when running,

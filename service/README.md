@@ -57,11 +57,14 @@ The plugin uses this mode when it autostarts the bridge.
 
 On track changes the SPW plugin calls `/salt-media-changed` on the bridge.
 The bridge wakes its main loop with an event instead of waiting for the next
-250 ms poll, so metadata and cover refresh immediately.
+100 ms fallback poll. Track title/artist/album are pushed to the device first;
+the cover is resolved right after, so a slow cover must never hold up the text
+update.
 
 Album covers are fetched from the SPW plugin's `/api/cover` endpoint, which
 reads the embedded artwork in-process with JAudioTagger. `ffmpeg` is only a
-fallback for files the plugin cannot parse.
+fallback for files the plugin cannot parse; the current SMTC thumbnail is used
+when the file itself has no embedded artwork.
 
 `bridge_server.cs` implements the HTTP/WebSocket server. `audio_capture.cs`
 implements the WASAPI loopback capture and log-spaced spectrum analysis. The

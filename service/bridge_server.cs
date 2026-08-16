@@ -799,5 +799,91 @@ namespace PcBridgeServer
                 try { stream.Close(); } catch { }
             }
         }
+
+        public sealed class FastMetrics
+        {
+            private readonly System.Diagnostics.PerformanceCounter cpu;
+            private readonly List<System.Diagnostics.PerformanceCounter> gpu =
+                new List<System.Diagnostics.PerformanceCounter>();
+
+            public FastMetrics()
+            {
+                try
+                {
+                    cpu = new System.Diagnostics.PerformanceCounter(
+                        "Processor", "% Processor Time", "_Total");
+                    cpu.NextValue();
+                }
+                catch
+                {
+                    cpu = null;
+                }
+
+                try
+                {
+                    System.Diagnostics.PerformanceCounterCategory category = null;
+                    foreach (System.Diagnostics.PerformanceCounterCategory candidate in
+                        System.Diagnostics.PerformanceCounterCategory.GetCategories())
+                    {
+                        if (candidate.CategoryName == "GPU Engine")
+                        {
+                            category = candidate;
+                            break;
+                        }
+                    }
+                    if (category == null)
+                    {
+                        return;
+                    }
+                    string[] instances = category.GetInstanceNames();
+                    foreach (string instance in instances)
+                    {
+                        if (!System.Diagnostics.PerformanceCounterCategory.CounterExists(
+                            "Utilization Percentage", instance, "GPU Engine"))
+                        {
+                            continue;
+                        }
+                        try
+                        {
+                            System.Diagnostics.PerformanceCounter counter =
+                                new System.Diagnostics.PerformanceCounter(
+                                    "GPU Engine", "Utilization Percentage", instance);
+                            counter.NextValue();
+                            gpu.Add(counter);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            public double CpuPercent()
+            {
+                if (cpu == null) return double.NaN;
+                try { return cpu.NextValue(); }
+                catch { return double.NaN; }
+            }
+
+            public double GpuPercent()
+            {
+                if (gpu == null || gpu.Count == 0) return double.NaN;
+                double sum = 0;
+                foreach (System.Diagnostics.PerformanceCounter counter in gpu)
+                {
+                    try { sum += counter.NextValue(); }
+                    catch { }
+                }
+                return Math.Min(100.0, sum);
+            }
+
+            public int GpuCounterCount
+            {
+                get { return gpu == null ? 0 : gpu.Count; }
+            }
+        }
     }
 }
