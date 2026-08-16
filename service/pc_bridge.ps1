@@ -97,7 +97,7 @@ function Test-SaltPlayerRunning {
 $script:ServiceMode = [bool]$ServiceMode
 $script:SmtcFallback = [bool]$SmtcFallback
 $script:SpectrumEnabled = -not $NoSpectrum
-$script:SaltPlayerAvailable = [ref](Test-SaltPlayerRunning)
+$script:SaltPlayerState = @{ available = (Test-SaltPlayerRunning) }
 $script:SpwWatchThread = $null
 
 if ($script:SpectrumEnabled) {
@@ -110,10 +110,10 @@ if ($script:SpectrumEnabled) {
                 Write-Host "Auto-detected Salt Player for Windows; capturing only that process."
             }
         }
-    } elseif (-not $script:SaltPlayerAvailable.Value) {
+    } elseif (-not $script:SaltPlayerState.available) {
         Write-Host "Service mode: spectrum will start when Salt Player for Windows is running."
     }
-    if ($script:ServiceMode -and -not $script:SaltPlayerAvailable.Value) {
+    if ($script:ServiceMode -and -not $script:SaltPlayerState.available) {
         # Spectrum starts later from the SPW watchdog thread.
     } else {
         try {
@@ -131,7 +131,7 @@ if ($script:ServiceMode) {
             [int]$UdpPort,
             [PcBridgeServer.BridgeServer]$BridgeServer,
             [System.Threading.AutoResetEvent]$WakeEvent,
-            [ref]$Available,
+            [hashtable]$State,
             [string]$PluginUrl,
             [bool]$SpectrumEnabled
         )
@@ -142,17 +142,23 @@ if ($script:ServiceMode) {
             Add-Content -LiteralPath $debugPath -Value (
                 (Get-Date -Format "HH:mm:ss.fff") + " " + $message) -Encoding UTF8
         }
-        $wasAvailable = [bool]$Available.Value
+        $wasAvailable = [bool]$State.available
         while ($true) {
             $available = @(Get-Process -Name "Salt Player for Windows" -ErrorAction SilentlyContinue).Count -gt 0
             if ($available -and $PluginUrl) {
                 try {
-                    $client = New-Object System.Net.WebClient
+                    $request = [System.Net.HttpWebRequest]::Create($PluginUrl + "/api/media")
+                    $request.Timeout = 2000
+                    $request.ReadWriteTimeout = 2000
+                    $response = $request.GetResponse()
                     try {
-                        $data = $client.DownloadString($PluginUrl + "/api/media")
+                        $stream = $response.GetResponseStream()
+                        $reader = New-Object System.IO.StreamReader($stream)
+                        $data = $reader.ReadToEnd()
+                        $reader.Dispose()
                         $available = [bool]$data
                     } finally {
-                        $client.Dispose()
+                        $response.Dispose()
                     }
                 } catch {
                     $available = $false
@@ -161,18 +167,18 @@ if ($script:ServiceMode) {
             if ($available -ne $wasAvailable) {
                 $wasAvailable = $available
                 try {
-                    if ($available -and $SpectrumEnabled) {
+                    if ($available -and $SpectrumEnabled -and -not $BridgeServer.AudioRunning) {
                         $BridgeServer.StartSpectrum($UdpPort, 0, "Salt Player for Windows")
                         & $debugWrite "spw watchdog: spectrum started"
-                    } elseif (-not $available) {
-                        $BridgeServer.Stop()
+                    } elseif (-not $available -and $BridgeServer.AudioRunning) {
+                        $BridgeServer.StopSpectrum()
                         & $debugWrite "spw watchdog: spectrum stopped"
                     }
                 } catch {
                     & $debugWrite ("spw watchdog error: " + $_.Exception.Message)
                 }
                 try {
-                    $Available.Value = $available
+                    $State.available = $available
                     $WakeEvent.Set()
                 } catch {
                 }
@@ -188,7 +194,7 @@ if ($script:ServiceMode) {
     $null = $watchPowerShell.AddArgument([int]$UdpPort)
     $null = $watchPowerShell.AddArgument($server)
     $null = $watchPowerShell.AddArgument($script:SaltMediaEvent)
-    $null = $watchPowerShell.AddArgument($script:SaltPlayerAvailable)
+    $null = $watchPowerShell.AddArgument($script:SaltPlayerState)
     $null = $watchPowerShell.AddArgument([string]$SaltPluginUrl)
     $null = $watchPowerShell.AddArgument($script:SpectrumEnabled)
     $script:SpwWatchThread = $watchPowerShell
@@ -222,6 +228,7 @@ $script:MediaPath = ""
 $script:LastError = ""
 $script:LastPrint = 0
 $script:LastMetricsMs = 0
+$script:LastUpdateLogMs = 0
 $script:LastStateKey = ""
 $script:LastStateSentMs = 0
 $script:CoverError = ""
@@ -536,7 +543,8 @@ function Start-MetricsSampler {
                 "-ExecutionPolicy", "Bypass",
                 "-File", $samplerPath,
                 "-OutputFile", $script:MetricsFile,
-                "-StopFile", $script:MetricsStopFile
+                "-StopFile", $script:MetricsStopFile,
+                "-BridgePid", [string]$PID
             ) -WindowStyle Hidden -PassThru
         Set-Content -LiteralPath $script:MetricsPidFile -Value ([string]$script:MetricsSampler.Id) -Encoding ASCII
     } catch {
@@ -602,8 +610,7 @@ function Update-SystemMetrics {
 function Update-Media {
     $updateSw = [System.Diagnostics.Stopwatch]::StartNew()
     $media = $null
-    if ($script:ServiceMode -and -not $script:SaltPlayerAvailable.Value) {
-        Write-BridgeDebug "service mode: salt player not running"
+    if ($script:ServiceMode -and -not $script:SaltPlayerState.available) {
         $media = $null
     } elseif ($script:SaltPluginUrl) {
         $media = Get-SaltPluginMedia
@@ -634,7 +641,11 @@ function Update-Media {
             $media.status -match "Playing"
         }
         $updateSw.Stop()
-        Write-BridgeDebug ("update_ms=" + $updateSw.ElapsedMilliseconds + " title=" + $media.title)
+        $nowMs = [Environment]::TickCount
+        if ($nowMs - $script:LastUpdateLogMs -gt 2000) {
+            $script:LastUpdateLogMs = $nowMs
+            Write-BridgeDebug ("update_ms=" + $updateSw.ElapsedMilliseconds + " title=" + $media.title)
+        }
     } else {
         if ($script:LastMediaKey -ne "") {
             $script:LastMediaKey = ""

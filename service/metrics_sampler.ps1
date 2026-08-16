@@ -1,6 +1,7 @@
 param(
     [string]$OutputFile = "",
-    [string]$StopFile = ""
+    [string]$StopFile = "",
+    [int]$BridgePid = 0
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -9,7 +10,17 @@ if (-not $StopFile) { $StopFile = Join-Path $env:TEMP "spw-pc-overview-metrics.s
 
 $lastCpu = $null
 $lastGpu = $null
+$lastParentCheck = 0
 while (-not (Test-Path -LiteralPath $StopFile)) {
+    if ($BridgePid -gt 0) {
+        $nowMs = [Environment]::TickCount
+        if ($nowMs - $lastParentCheck -gt 5000) {
+            $lastParentCheck = $nowMs
+            if (-not (Get-Process -Id $BridgePid -ErrorAction SilentlyContinue)) {
+                break
+            }
+        }
+    }
     $started = [DateTime]::UtcNow
     try {
         $samples = Get-Counter `

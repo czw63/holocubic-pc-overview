@@ -203,6 +203,11 @@ namespace PcBridgeServer
 
         public void StartSpectrum(int udpPort = 8090, int processId = 0, string processName = null)
         {
+            if (audio != null)
+            {
+                try { audio.Stop(); } catch { }
+                audio = null;
+            }
             this.udpPort = udpPort > 0 ? udpPort : 8090;
             try
             {
@@ -231,6 +236,15 @@ namespace PcBridgeServer
             catch (Exception ex)
             {
                 lock (sync) lastError = ex.ToString();
+            }
+        }
+
+        public void StopSpectrum()
+        {
+            if (audio != null)
+            {
+                try { audio.Stop(); } catch { }
+                audio = null;
             }
         }
 
