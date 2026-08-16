@@ -27,17 +27,21 @@ while (-not (Test-Path -LiteralPath $StopFile)) {
             "\Processor(_Total)\% Processor Time", `
             "\GPU Engine(*)\Utilization Percentage" `
             -SampleInterval 1 -MaxSamples 1 -ErrorAction Stop
-        $cpuSample = $samples.CounterSamples |
-            Where-Object { $_.Path -like "*Processor(_Total)*" } |
-            Select-Object -First 1
-        if ($cpuSample) { $lastCpu = [double]$cpuSample.CookedValue }
-        $gpuSamples = $samples.CounterSamples |
-            Where-Object { $_.Path -like "*GPU Engine*" }
-        if ($gpuSamples) {
-            $gpu = [double](($gpuSamples | Measure-Object -Property CookedValue -Sum).Sum)
-            if ($gpu -gt 100) { $gpu = 100 }
-            $lastGpu = $gpu
+        $cpuFound = $false
+        $gpuFound = $false
+        $gpuSum = 0.0
+        foreach ($sample in $samples.CounterSamples) {
+            $path = [string]$sample.Path
+            if (-not $cpuFound -and $path -like "*Processor(_Total)*") {
+                $lastCpu = [double]$sample.CookedValue
+                $cpuFound = $true
+            } elseif ($path -like "*GPU Engine*") {
+                $gpuSum += [double]$sample.CookedValue
+                $gpuFound = $true
+            }
         }
+        if ($gpuSum -gt 100) { $gpuSum = 100 }
+        if ($gpuFound) { $lastGpu = $gpuSum }
     } catch {
         try {
             $cpuSample = (Get-Counter "\Processor(_Total)\% Processor Time" `
