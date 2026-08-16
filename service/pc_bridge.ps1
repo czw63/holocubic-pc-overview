@@ -104,6 +104,7 @@ $script:State = @{
     album = ""
     app = ""
     cover_version = 0
+    cover_error = ""
 }
 
 $script:LastMediaKey = ""
@@ -113,6 +114,7 @@ $script:LastPrint = 0
 $script:LastMetricsMs = 0
 $script:LastStateKey = ""
 $script:LastStateSentMs = 0
+$script:CoverError = ""
 $script:SaltPluginUrl = $SaltPluginUrl
 
 function Get-CpuGpuUsage {
@@ -283,7 +285,10 @@ function Get-ThumbnailBytes($thumbnail) {
 }
 
 function Get-CoverRgb565FromFile($path) {
-    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $null }
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) {
+        $script:CoverError = "cover file not found: $path"
+        return $null
+    }
     try {
         $fileOp = [Windows.Storage.StorageFile]::GetFileFromPathAsync($path)
         $file = Await $fileOp ([Windows.Storage.StorageFile])
@@ -294,8 +299,47 @@ function Get-CoverRgb565FromFile($path) {
         $thumbType = [Type]::GetType(
             "Windows.Storage.Streams.IRandomAccessStreamWithContentType,Windows.Storage.Streams,ContentType=WindowsRuntime")
         $thumb = Await $thumbOp $thumbType
-        return Get-ThumbnailBytes $thumb
+        $bytes = Get-ThumbnailBytes $thumb
+        if ($bytes) {
+            $script:CoverError = ""
+            return ,$bytes
+        }
+        $script:CoverError = "WinRT thumbnail returned no bytes"
+        return $null
     } catch {
+        $script:CoverError = $_.Exception.Message
+        $script:LastError = $_.Exception.Message
+        return $null
+    }
+}
+
+function Get-CoverBytesFromFile($path) {
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) {
+        $script:CoverError = "cover file not found: $path"
+        return $null
+    }
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "ffmpeg.exe"
+        $psi.Arguments = "-hide_banner -loglevel error -y -i `"$path`" -map 0:v:0 -c:v mjpeg -frames:v 1 -f image2pipe -"
+        $psi.RedirectStandardOutput = $true
+        $psi.UseShellExecute = $false
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $ms = New-Object System.IO.MemoryStream
+        try {
+            $p.StandardOutput.BaseStream.CopyTo($ms)
+        } finally {
+            [void]$p.WaitForExit(10000)
+            $p.Dispose()
+        }
+        if ($ms.Length -gt 16) {
+            $script:CoverError = ""
+            return ,$ms.ToArray()
+        }
+        $script:CoverError = "ffmpeg produced no cover stream"
+        return $null
+    } catch {
+        $script:CoverError = $_.Exception.Message
         $script:LastError = $_.Exception.Message
         return $null
     }
@@ -309,7 +353,11 @@ function Get-SaltPluginMedia {
         $playing = $false
         if ($null -ne $media.playing) { $playing = [bool]$media.playing }
         $state = [string]$media.state
-        if ($state -eq "") { $state = if ($playing) { "Playing" } else { "Paused" } }
+        if ($playing) {
+            $state = "Playing"
+        } elseif ($state -eq "") {
+            $state = "Paused"
+        }
         return @{
             title = [string]$media.title
             artist = [string]$media.artist
@@ -379,23 +427,39 @@ function Update-Media {
             $script:CoverVersion++
             $cover = $null
             if ($media.path) {
-                $cover = Get-CoverRgb565FromFile $media.path
+                $cover = Get-CoverBytesFromFile $media.path
+                if (-not $cover) {
+                    $cover = Get-CoverRgb565FromFile $media.path
+                }
             }
             if (-not $cover -and $media.thumbnail) {
                 $cover = Get-ThumbnailBytes $media.thumbnail
             }
             if ($cover) {
-                $server.SetCoverJpeg($cover, ([string]$script:CoverVersion), $CoverSize)
+                try {
+                    $server.SetCoverJpeg($cover, ([string]$script:CoverVersion), $CoverSize)
+                    $script:State.cover_error = ""
+                } catch {
+                    $script:State.cover_error = "SetCoverJpeg failed: " + $_.Exception.Message
+                    $server.SetCover($null, ([string]$script:CoverVersion))
+                }
             } else {
+                $script:State.cover_error = $script:CoverError
                 $server.SetCover($null, ([string]$script:CoverVersion))
             }
+        } else {
+            $script:State.cover_error = $script:CoverError
         }
         $script:State.title = $media.title
         $script:State.artist = $media.artist
         $script:State.album = $media.album
         $script:State.app = if ($media.app) { $media.app } else { "" }
         $script:State.status = if ($media.status) { $media.status } else { "NoSession" }
-        $script:State.playing = $media.status -match "Playing"
+        $script:State.playing = if ($null -ne $media.playing) {
+            [bool]$media.playing
+        } else {
+            $media.status -match "Playing"
+        }
     } else {
         if ($script:LastMediaKey -ne "") {
             $script:LastMediaKey = ""
