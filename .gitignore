@@ -1,0 +1,17 @@
+# Build and runtime artifacts
+service/bin/
+service/obj/
+*.dll
+*.exe
+*.log
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Local scratch files
+*_wtest.txt
+tmp/

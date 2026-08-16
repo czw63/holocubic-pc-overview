@@ -1,0 +1,6 @@
+name = PC Overview
+kind = app
+entry = main.lua
+icon = main.png
+description = PC music, system usage, weather and spectrum
+version = 1.0.0
