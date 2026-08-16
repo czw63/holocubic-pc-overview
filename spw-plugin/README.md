@@ -79,13 +79,23 @@ verify the shape of the plugin.
 Output:
 
 ```text
-build/spw-pc-overview-plugin-0.1.0.zip
+build/plugin-SPWPCOverview-0.1.0.zip
+```
+
+The zip follows the SPW workshop package layout used by existing plugins:
+
+```text
+META-INF/MANIFEST.MF
+classes/META-INF/MANIFEST.MF
+classes/META-INF/extensions.idx
+classes/com/czw/pcoverview/spw/...
+lib/
 ```
 
 ## Install
 
 1. Open SPW -> Settings -> Workshop -> Mod management -> Import.
-2. Import `spw-pc-overview-plugin-0.1.0.zip`.
+2. Import `plugin-SPWPCOverview-0.1.0.zip`.
 3. Enable the mod and restart SPW once as recommended by SPW.
 
 Then check:

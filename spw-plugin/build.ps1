@@ -5,16 +5,15 @@ $src = Join-Path $root "src"
 $stubs = Join-Path $root "stubs"
 $build = Join-Path $root "build"
 $classes = Join-Path $build "classes"
-$dist = Join-Path $build "dist"
-$pluginJar = Join-Path $build "spw-pc-overview-plugin.jar"
+$rootDir = Join-Path $build "root"
 $pluginVersion = "0.1.0"
-$pluginZip = Join-Path $build "spw-pc-overview-plugin-$pluginVersion.zip"
+$pluginZip = Join-Path $build "plugin-SPWPCOverview-$pluginVersion.zip"
 
 if (Test-Path -LiteralPath $build) {
     Remove-Item -LiteralPath $build -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $classes | Out-Null
-New-Item -ItemType Directory -Force -Path $dist | Out-Null
+New-Item -ItemType Directory -Force -Path $rootDir | Out-Null
 
 $sources = @()
 $sources += Get-ChildItem -Path $stubs -Recurse -Filter "*.java" | ForEach-Object { $_.FullName }
@@ -32,7 +31,7 @@ Copy-Item -LiteralPath (Join-Path $src "META-INF\extensions.idx") -Destination (
 $manifest = @"
 Manifest-Version: 1.0
 Plugin-Class: com.czw.pcoverview.spw.SpwPcOverviewPlugin
-Plugin-Id: com.czw.pcoverview.spw
+Plugin-Id: SPWPCOverview
 Plugin-Name: SPW PC Overview
 Plugin-Version: $pluginVersion
 Plugin-Provider: czw63
@@ -41,16 +40,32 @@ Plugin-Open-Source-Url: https://github.com/czw63/holocubic-pc-overview
 Plugin-Has-Config: false
 
 "@
-$manifestPath = Join-Path $build "MANIFEST.MF"
+$manifestPath = Join-Path $idxDir "MANIFEST.MF"
 Set-Content -LiteralPath $manifestPath -Value $manifest -Encoding Ascii
 
-jar cfm $pluginJar $manifestPath -C $classes .
-if ($LASTEXITCODE -ne 0) {
-    throw "jar failed"
-}
+$rootMeta = Join-Path $rootDir "META-INF"
+New-Item -ItemType Directory -Force -Path $rootMeta | Out-Null
+$rootManifest = @"
+Manifest-Version: 1.0
 
-New-Item -ItemType Directory -Force -Path (Join-Path $dist "classes") | Out-Null
-Copy-Item -LiteralPath $pluginJar -Destination (Join-Path $dist "classes") -Force
-Compress-Archive -Path (Join-Path $dist "*") -DestinationPath $pluginZip -Force
+"@
+Set-Content -LiteralPath (Join-Path $rootMeta "MANIFEST.MF") -Value $rootManifest -Encoding Ascii
+
+$rootClasses = Join-Path $rootDir "classes"
+New-Item -ItemType Directory -Force -Path $rootClasses | Out-Null
+$rootPackage = Join-Path $rootClasses "com\czw"
+New-Item -ItemType Directory -Force -Path $rootPackage | Out-Null
+Copy-Item -Path (Join-Path $classes "com\czw\*") -Destination $rootPackage -Recurse -Force
+
+$rootClassesMeta = Join-Path $rootClasses "META-INF"
+New-Item -ItemType Directory -Force -Path $rootClassesMeta | Out-Null
+Copy-Item -LiteralPath (Join-Path $idxDir "extensions.idx") -Destination (Join-Path $rootClassesMeta "extensions.idx") -Force
+Copy-Item -LiteralPath (Join-Path $idxDir "MANIFEST.MF") -Destination (Join-Path $rootClassesMeta "MANIFEST.MF") -Force
+
+$rootLib = Join-Path $rootDir "lib"
+New-Item -ItemType Directory -Force -Path $rootLib | Out-Null
+Set-Content -LiteralPath (Join-Path $rootLib ".keep") -Value "" -Encoding Ascii
+
+Compress-Archive -Path (Join-Path $rootDir "*") -DestinationPath $pluginZip -Force
 
 Write-Host "Built $pluginZip"
