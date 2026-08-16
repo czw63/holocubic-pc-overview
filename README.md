@@ -18,6 +18,7 @@ cube into a PC status display:
 holocubic-pc-overview/
   package/   HoloCubic app, deploy to /sd/apps/pc_overview/
   service/   Windows bridge: SMTC, system metrics, WASAPI spectrum
+  spw-plugin/ Salt Player for Windows plugin prototype
   docs/      Protocol and performance notes
   preview_320x240.png
 ```

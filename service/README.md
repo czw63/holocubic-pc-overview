@@ -46,6 +46,15 @@ target with:
 The process-loopback capture uses `ApplicationLoopback.dll` from
 `ApplicationLoopback.NET` (MIT). See `THIRD_PARTY_NOTICES.md`.
 
+When the SPW plugin is running, start the bridge with its media API to use
+Salt Player metadata and the current file path instead of SMTC:
+
+```text
+-SaltPluginUrl http://127.0.0.1:8091
+```
+
+The plugin uses this mode when it autostarts the bridge.
+
 `bridge_server.cs` implements the HTTP/WebSocket server. `audio_capture.cs`
 implements the WASAPI loopback capture and log-spaced spectrum analysis. The
 PowerShell script compiles both files with `Add-Type` at startup.

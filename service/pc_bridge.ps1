@@ -4,6 +4,7 @@ param(
     [int]$CoverSize = 96,
     [int]$SpectrumProcessId = 0,
     [string]$SpectrumProcessName = "",
+    [string]$SaltPluginUrl = "",
     [switch]$NoSpectrum,
     [switch]$SelfTest
 )
@@ -41,6 +42,9 @@ try {
 
 $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType=WindowsRuntime]
 $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType=WindowsRuntime]
+$null = [Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime]
+$null = [Windows.Storage.FileProperties.ThumbnailMode, Windows.Storage.FileProperties, ContentType=WindowsRuntime]
+$null = [Windows.Storage.FileProperties.ThumbnailOptions, Windows.Storage.FileProperties, ContentType=WindowsRuntime]
 
 $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
     $_.Name -eq "AsTask" -and $_.IsGenericMethod -and
@@ -103,6 +107,7 @@ $script:LastPrint = 0
 $script:LastMetricsMs = 0
 $script:LastStateKey = ""
 $script:LastStateSentMs = 0
+$script:SaltPluginUrl = $SaltPluginUrl
 
 function Get-CpuGpuUsage {
     try {
@@ -271,6 +276,49 @@ function Get-ThumbnailBytes($thumbnail) {
     }
 }
 
+function Get-CoverRgb565FromFile($path) {
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $fileOp = [Windows.Storage.StorageFile]::GetFileFromPathAsync($path)
+        $file = Await $fileOp ([Windows.Storage.StorageFile])
+        $thumbOp = $file.GetThumbnailAsync(
+            [Windows.Storage.FileProperties.ThumbnailMode]::MusicView,
+            512,
+            [Windows.Storage.FileProperties.ThumbnailOptions]::None)
+        $thumbType = [Type]::GetType(
+            "Windows.Storage.Streams.IRandomAccessStreamWithContentType,Windows.Storage.Streams,ContentType=WindowsRuntime")
+        $thumb = Await $thumbOp $thumbType
+        return Get-ThumbnailBytes $thumb
+    } catch {
+        $script:LastError = $_.Exception.Message
+        return $null
+    }
+}
+
+function Get-SaltPluginMedia {
+    if (-not $script:SaltPluginUrl) { return $null }
+    try {
+        $media = Invoke-RestMethod -Uri ($script:SaltPluginUrl + "/api/media") -TimeoutSec 2
+        if (-not $media -or $media.ok -ne $true) { return $null }
+        $playing = $false
+        if ($null -ne $media.playing) { $playing = [bool]$media.playing }
+        $state = [string]$media.state
+        if ($state -eq "") { $state = if ($playing) { "Playing" } else { "Paused" } }
+        return @{
+            title = [string]$media.title
+            artist = [string]$media.artist
+            album = [string]$media.album
+            path = [string]$media.path
+            playing = $playing
+            status = $state
+            app = "Salt Player for Windows"
+        }
+    } catch {
+        $script:LastError = $_.Exception.Message
+        return $null
+    }
+}
+
 if ($SelfTest) {
     try {
         $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime]
@@ -309,13 +357,27 @@ function Update-SystemMetrics {
 }
 
 function Update-Media {
-    $media = Get-MediaSnapshot
+    $media = $null
+    if ($script:SaltPluginUrl) {
+        $media = Get-SaltPluginMedia
+        if (-not $media) {
+            $media = Get-MediaSnapshot
+        }
+    } else {
+        $media = Get-MediaSnapshot
+    }
     if ($media) {
-        $key = $media.title + "|" + $media.artist + "|" + $media.album
+        $key = $media.title + "|" + $media.artist + "|" + $media.album + "|" + $media.path
         if ($key -ne $script:LastMediaKey) {
             $script:LastMediaKey = $key
             $script:CoverVersion++
-            $cover = Get-ThumbnailBytes $media.thumbnail
+            $cover = $null
+            if ($media.path) {
+                $cover = Get-CoverRgb565FromFile $media.path
+            }
+            if (-not $cover -and $media.thumbnail) {
+                $cover = Get-ThumbnailBytes $media.thumbnail
+            }
             if ($cover) {
                 $server.SetCoverJpeg($cover, ([string]$script:CoverVersion), $CoverSize)
             } else {
@@ -325,8 +387,8 @@ function Update-Media {
         $script:State.title = $media.title
         $script:State.artist = $media.artist
         $script:State.album = $media.album
-        $script:State.app = $media.app
-        $script:State.status = $media.status
+        $script:State.app = if ($media.app) { $media.app } else { "" }
+        $script:State.status = if ($media.status) { $media.status } else { "NoSession" }
         $script:State.playing = $media.status -match "Playing"
     } else {
         if ($script:LastMediaKey -ne "") {

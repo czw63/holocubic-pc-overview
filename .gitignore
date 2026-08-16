@@ -8,6 +8,7 @@ service/obj/
 
 # Local backups
 backups/
+spw-plugin/build/
 
 # Editors and OS
 .vs/

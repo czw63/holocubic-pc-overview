@@ -23,6 +23,22 @@ audio through its own process tree, the bridge can capture exactly that
 process with `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK` and compute the
 spectrum itself. This is already implemented in the bridge.
 
+## Current Architecture
+
+The PC-side stack is split by responsibility:
+
+- SPW plugin: current track metadata, file path, playback state
+- Windows bridge: system metrics, album cover, process-loopback spectrum, and
+  the HTTP/WebSocket/UDP protocol to the HoloCubic
+
+The plugin can automatically launch the bridge as a hidden PowerShell process
+when SPW starts, passing `-SaltPluginUrl`, so the whole PC-side stack starts
+with SPW and stops when SPW exits. This avoids fragile internal SPW reflection
+while still integrating cleanly with the player.
+
+Set the user environment variable `PC_OVERVIEW_BRIDGE_DIR` to the
+`service/` folder to enable plugin-managed bridge autostart.
+
 ## Future Option: Decode the Current File
 
 The workshop API does expose `MediaItem.path`. A plugin can publish that path
