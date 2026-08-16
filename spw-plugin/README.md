@@ -47,6 +47,14 @@ GET /api/media
 }
 ```
 
+```text
+GET /api/cover
+```
+
+Returns the embedded cover of the current audio file. The plugin reads it
+in-process with SPW's bundled JAudioTagger, so no external tools are needed
+for normal covers.
+
 Set the port with the `SPW_PC_OVERVIEW_PORT` environment variable or the
 `spw.pc.overview.port` system property.
 

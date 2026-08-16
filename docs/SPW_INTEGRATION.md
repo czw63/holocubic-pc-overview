@@ -43,6 +43,10 @@ Track changes are push-based: the plugin calls the bridge's
 `/salt-media-changed` endpoint in its playback callback, and the bridge wakes
 up immediately instead of waiting for the next polling interval.
 
+Covers come from the plugin's `/api/cover` endpoint using SPW's bundled
+JAudioTagger, so the bridge does not depend on an external `ffmpeg` process
+for normal embedded artwork.
+
 ## Future Option: Decode the Current File
 
 The workshop API does expose `MediaItem.path`. A plugin can publish that path

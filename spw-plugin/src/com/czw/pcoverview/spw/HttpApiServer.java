@@ -81,7 +81,18 @@ public final class HttpApiServer {
 
             String body;
             String contentType;
-            if ("GET".equals(method) && "/api/media".equals(path)) {
+            if ("GET".equals(method) && "/api/cover".equals(path)) {
+                byte[] cover = CoverExtractor.extract(
+                    PlaybackState.media == null ? "" : PlaybackState.media.getPath());
+                if (cover == null || cover.length == 0) {
+                    writeResponse(socket.getOutputStream(), "404 Not Found",
+                        "text/plain; charset=utf-8", "no cover");
+                } else {
+                    writeBinaryResponse(socket.getOutputStream(), "200 OK",
+                        "image/jpeg", cover);
+                }
+                return;
+            } else if ("GET".equals(method) && "/api/media".equals(path)) {
                 contentType = "application/json; charset=utf-8";
                 body = mediaJson();
             } else if ("GET".equals(method) && "/health".equals(path)) {
@@ -152,14 +163,26 @@ public final class HttpApiServer {
     private static void writeResponse(OutputStream out, String status, String contentType, String body)
             throws IOException {
         byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+        writeHeader(out, status, contentType, bodyBytes.length);
+        out.write(bodyBytes);
+        out.flush();
+    }
+
+    private static void writeBinaryResponse(OutputStream out, String status, String contentType,
+            byte[] bodyBytes) throws IOException {
+        writeHeader(out, status, contentType, bodyBytes.length);
+        out.write(bodyBytes);
+        out.flush();
+    }
+
+    private static void writeHeader(OutputStream out, String status, String contentType,
+            int contentLength) throws IOException {
         StringBuilder header = new StringBuilder();
         header.append("HTTP/1.1 ").append(status).append("\r\n");
         header.append("Content-Type: ").append(contentType).append("\r\n");
-        header.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
+        header.append("Content-Length: ").append(contentLength).append("\r\n");
         header.append("Connection: close\r\n");
         header.append("Access-Control-Allow-Origin: *\r\n\r\n");
         out.write(header.toString().getBytes(StandardCharsets.ISO_8859_1));
-        out.write(bodyBytes);
-        out.flush();
     }
 }

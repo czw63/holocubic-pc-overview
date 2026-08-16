@@ -119,6 +119,15 @@ $script:LastStateSentMs = 0
 $script:CoverError = ""
 $script:SaltPluginUrl = $SaltPluginUrl
 
+function Write-BridgeDebug($message) {
+    try {
+        $debugPath = Join-Path $env:TEMP "spw-pc-overview-bridge-debug.log"
+        Add-Content -LiteralPath $debugPath -Value (
+            (Get-Date -Format "HH:mm:ss.fff") + " " + $message) -Encoding UTF8
+    } catch {
+    }
+}
+
 function Get-CpuGpuUsage {
     try {
         $samples = Get-Counter `
@@ -347,6 +356,27 @@ function Get-CoverBytesFromFile($path) {
     }
 }
 
+function Get-CoverBytesFromPlugin {
+    if (-not $script:SaltPluginUrl) { return $null }
+    try {
+        $client = New-Object System.Net.WebClient
+        try {
+            $bytes = $client.DownloadData($script:SaltPluginUrl + "/api/cover")
+            if ($bytes -and $bytes.Length -gt 16) {
+                $script:CoverError = ""
+                return ,$bytes
+            }
+        } finally {
+            $client.Dispose()
+        }
+        $script:CoverError = "plugin cover empty"
+        return $null
+    } catch {
+        $script:CoverError = "plugin cover failed: " + $_.Exception.Message
+        return $null
+    }
+}
+
 function Get-SaltPluginMedia {
     if (-not $script:SaltPluginUrl) { return $null }
     try {
@@ -413,6 +443,7 @@ function Update-SystemMetrics {
 }
 
 function Update-Media {
+    $updateSw = [System.Diagnostics.Stopwatch]::StartNew()
     $media = $null
     if ($script:SaltPluginUrl) {
         $media = Get-SaltPluginMedia
@@ -427,12 +458,19 @@ function Update-Media {
         if ($key -ne $script:LastMediaKey) {
             $script:LastMediaKey = $key
             $script:CoverVersion++
+            Write-BridgeDebug ("media change title=" + $media.title + " artist=" + $media.artist)
             $cover = $null
             if ($media.path) {
-                $cover = Get-CoverBytesFromFile $media.path
+                $coverSw = [System.Diagnostics.Stopwatch]::StartNew()
+                $cover = Get-CoverBytesFromPlugin
+                if (-not $cover) {
+                    $cover = Get-CoverBytesFromFile $media.path
+                }
                 if (-not $cover) {
                     $cover = Get-CoverRgb565FromFile $media.path
                 }
+                $coverSw.Stop()
+                Write-BridgeDebug ("cover_ms=" + $coverSw.ElapsedMilliseconds + " ok=" + [bool]$cover)
             }
             if (-not $cover -and $media.thumbnail) {
                 $cover = Get-ThumbnailBytes $media.thumbnail
@@ -462,6 +500,8 @@ function Update-Media {
         } else {
             $media.status -match "Playing"
         }
+        $updateSw.Stop()
+        Write-BridgeDebug ("update_ms=" + $updateSw.ElapsedMilliseconds + " title=" + $media.title)
     } else {
         if ($script:LastMediaKey -ne "") {
             $script:LastMediaKey = ""
@@ -529,7 +569,10 @@ try {
         } catch {
             Write-Host ("poll error: " + $_.Exception.Message)
         }
-        [void]$script:SaltMediaEvent.WaitOne(250)
+        $woke = $script:SaltMediaEvent.WaitOne(250)
+        if ($woke) {
+            Write-BridgeDebug "event wake"
+        }
     }
 } finally {
     $server.Stop()
