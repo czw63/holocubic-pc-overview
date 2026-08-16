@@ -20,6 +20,10 @@ public final class BridgeLauncher {
         if (process != null && process.isAlive()) {
             return;
         }
+        if ("false".equalsIgnoreCase(System.getenv("PC_OVERVIEW_AUTOSTART_BRIDGE"))) {
+            System.out.println("[pc-overview] PC_OVERVIEW_AUTOSTART_BRIDGE=false, bridge autostart skipped");
+            return;
+        }
         String dir = resolveBridgeDir();
         if (dir == null) {
             System.out.println("[pc-overview] PC_OVERVIEW_BRIDGE_DIR not found, bridge autostart skipped");
