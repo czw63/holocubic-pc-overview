@@ -34,6 +34,18 @@ Use `-Port 9000` to change the bridge port, `-UdpPort 9001` to change the UDP
 port, and `-NoSpectrum` to disable loopback capture. `-SelfTest` checks RGB565
 cover conversion and exits.
 
+When `Salt Player for Windows` is running, the bridge automatically captures
+only that process tree with the Windows process-loopback API. Override the
+target with:
+
+```text
+-SpectrumProcessName "Spotify"
+-SpectrumProcessId 1234
+```
+
+The process-loopback capture uses `ApplicationLoopback.dll` from
+`ApplicationLoopback.NET` (MIT). See `THIRD_PARTY_NOTICES.md`.
+
 `bridge_server.cs` implements the HTTP/WebSocket server. `audio_capture.cs`
 implements the WASAPI loopback capture and log-spaced spectrum analysis. The
 PowerShell script compiles both files with `Add-Type` at startup.

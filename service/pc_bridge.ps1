@@ -2,6 +2,8 @@ param(
     [int]$Port = 8088,
     [int]$UdpPort = 8090,
     [int]$CoverSize = 96,
+    [int]$SpectrumProcessId = 0,
+    [string]$SpectrumProcessName = "",
     [switch]$NoSpectrum,
     [switch]$SelfTest
 )
@@ -61,8 +63,16 @@ try {
 }
 
 if (-not $NoSpectrum) {
+    if ($SpectrumProcessId -le 0 -and [string]::IsNullOrEmpty($SpectrumProcessName)) {
+        $spw = Get-Process -Name "Salt Player for Windows" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($spw) {
+            $SpectrumProcessName = "Salt Player for Windows"
+            Write-Host "Auto-detected Salt Player for Windows; capturing only that process."
+        }
+    }
     try {
-        $server.StartSpectrum($UdpPort)
+        $server.StartSpectrum($UdpPort, $SpectrumProcessId, $SpectrumProcessName)
         Write-Host "Loopback spectrum capture started."
     } catch {
         Write-Host ("Spectrum disabled: " + $_.Exception.Message)

@@ -7,7 +7,8 @@ cube into a PC status display:
 - CPU, GPU and RAM usage from the Windows machine
 - Local weather from the built-in CubicServer weather API
 - Local time and date
-- Live WASAPI loopback spectrum with smooth local bar rendering
+- Live WASAPI spectrum with smooth local bar rendering; when Salt Player for
+  Windows is running, only its audio process is captured
 
 ![Preview](preview_320x240.png)
 
@@ -49,6 +50,10 @@ It listens on `0.0.0.0:8088` by default and serves:
 Allow port 8088 through the Windows Firewall for private networks. The music
 app must publish SMTC metadata; most desktop players do.
 
+For spectrum capture, the bridge automatically targets the `Salt Player for
+Windows` process tree when it is running. Otherwise it falls back to the
+default WASAPI render endpoint.
+
 ## Performance
 
 Spectrum data is sent as a 32-byte UDP datagram on port 8090. The HoloCubic
@@ -56,8 +61,9 @@ draws the bars locally instead of receiving a pre-rendered RGB565 frame. This
 matches the approach used by the built-in HoloCubic Spectrum app and keeps the
 network and Lua runtime load small even at high update rates.
 
-See [docs/PROTOCOL.md](docs/PROTOCOL.md) and
-[docs/PERFORMANCE.md](docs/PERFORMANCE.md) for details.
+See [docs/PROTOCOL.md](docs/PROTOCOL.md),
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) and
+[docs/SPW_INTEGRATION.md](docs/SPW_INTEGRATION.md) for details.
 
 ## License
 

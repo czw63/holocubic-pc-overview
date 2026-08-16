@@ -199,7 +199,7 @@ namespace PcBridgeServer
             }
         }
 
-        public void StartSpectrum(int udpPort = 8090)
+        public void StartSpectrum(int udpPort = 8090, int processId = 0, string processName = null)
         {
             this.udpPort = udpPort > 0 ? udpPort : 8090;
             try
@@ -215,7 +215,7 @@ namespace PcBridgeServer
             }
             try
             {
-                audio = new PcBridgeAudio.LoopbackSpectrum();
+                audio = new PcBridgeAudio.LoopbackSpectrum(processId, processName);
                 audio.OnSpectrum = delegate(double[] bins)
                 {
                     SetSpectrum(bins);

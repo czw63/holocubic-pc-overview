@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -49,6 +50,29 @@ namespace PcBridgeAudio
         public ushort wValidBitsPerSample;
         public uint dwChannelMask;
         public Guid SubFormat;
+    }
+
+    internal delegate void ApplicationLoopbackAudioCallback(
+        IntPtr instance, IntPtr data, uint length);
+
+    internal delegate void ApplicationLoopbackEvent(IntPtr instance);
+
+    internal static class ApplicationLoopbackNative
+    {
+        [DllImport("ApplicationLoopback.dll", CallingConvention = CallingConvention.StdCall)]
+        internal static extern IntPtr InitializeCapture(
+            ushort channels, uint sampleRate, ushort bitsPerSample,
+            ApplicationLoopbackAudioCallback callback, ApplicationLoopbackEvent audioCaptureStopped);
+
+        [DllImport("ApplicationLoopback.dll", CallingConvention = CallingConvention.StdCall)]
+        internal static extern int StartCaptureAsync(
+            IntPtr capture, uint processId, bool includeProcessTree);
+
+        [DllImport("ApplicationLoopback.dll", CallingConvention = CallingConvention.StdCall)]
+        internal static extern int StopCaptureAsync(IntPtr capture);
+
+        [DllImport("ApplicationLoopback.dll", CallingConvention = CallingConvention.StdCall)]
+        internal static extern void FreeCapture(IntPtr capture);
     }
 
     [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"),
@@ -168,8 +192,26 @@ namespace PcBridgeAudio
 
         private const int FftSize = 1024;
         private const int BinCount = 32;
+        private readonly int targetProcessId;
+        private readonly string targetProcessName;
+        private readonly ApplicationLoopbackAudioCallback processAudioDelegate;
+        private readonly ApplicationLoopbackEvent processStoppedDelegate;
+        private readonly object processLock = new object();
+        private readonly AutoResetEvent processWait = new AutoResetEvent(false);
+        private IntPtr processCapture;
+        private double[] processFftBuffer = new double[FftSize];
+        private int processPosition;
+        private double[] processSmooth = new double[BinCount];
         private volatile bool running;
         private Thread thread;
+
+        public LoopbackSpectrum(int processId = 0, string processName = null)
+        {
+            targetProcessId = processId;
+            targetProcessName = processName;
+            processAudioDelegate = OnProcessAudio;
+            processStoppedDelegate = OnProcessStopped;
+        }
 
         public bool Running
         {
@@ -180,7 +222,9 @@ namespace PcBridgeAudio
         {
             if (running) return;
             running = true;
-            thread = new Thread(Worker);
+            thread = targetProcessId > 0 || !string.IsNullOrEmpty(targetProcessName)
+                ? new Thread(ProcessWorker)
+                : new Thread(Worker);
             thread.IsBackground = true;
             thread.Name = "loopback-spectrum";
             thread.Start();
@@ -189,11 +233,166 @@ namespace PcBridgeAudio
         public void Stop()
         {
             running = false;
+            IntPtr capture;
+            lock (processLock)
+            {
+                capture = processCapture;
+                processCapture = IntPtr.Zero;
+            }
+            if (capture != IntPtr.Zero)
+            {
+                try { ApplicationLoopbackNative.StopCaptureAsync(capture); } catch { }
+            }
+            processWait.Set();
             if (thread != null && thread.IsAlive)
             {
                 thread.Join(500);
             }
             thread = null;
+        }
+
+        private void ProcessWorker()
+        {
+            while (running)
+            {
+                int pid = ResolveProcessId();
+                if (pid <= 0)
+                {
+                    if (OnError != null)
+                    {
+                        OnError("target process not found: " + (targetProcessName ?? targetProcessId.ToString()));
+                    }
+                    Thread.Sleep(2000);
+                    continue;
+                }
+
+                IntPtr capture = IntPtr.Zero;
+                try
+                {
+                    capture = ApplicationLoopbackNative.InitializeCapture(
+                        2, 48000, 16, processAudioDelegate, processStoppedDelegate);
+                    if (capture == IntPtr.Zero)
+                    {
+                        if (OnError != null) OnError("ApplicationLoopback init failed");
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+
+                    lock (processLock) processCapture = capture;
+                    int hr = ApplicationLoopbackNative.StartCaptureAsync(
+                        capture, (uint)pid, true);
+                    if (hr < 0)
+                    {
+                        if (OnError != null)
+                        {
+                            OnError("ApplicationLoopback start failed hr=0x" + hr.ToString("X8"));
+                        }
+                        lock (processLock) processCapture = IntPtr.Zero;
+                        try { ApplicationLoopbackNative.FreeCapture(capture); } catch { }
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+
+                    if (OnError != null) OnError("process loopback started pid=" + pid);
+                    processWait.Reset();
+                    while (running)
+                    {
+                        if (processWait.WaitOne(1000)) break;
+                        if (!string.IsNullOrEmpty(targetProcessName) && !ProcessStillAlive(pid)) break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (OnError != null) OnError(ex.Message);
+                    Thread.Sleep(2000);
+                }
+                finally
+                {
+                    IntPtr cap;
+                    lock (processLock)
+                    {
+                        cap = processCapture;
+                        processCapture = IntPtr.Zero;
+                    }
+                    if (cap != IntPtr.Zero)
+                    {
+                        try { ApplicationLoopbackNative.FreeCapture(cap); } catch { }
+                    }
+                }
+            }
+        }
+
+        private int ResolveProcessId()
+        {
+            if (targetProcessId > 0) return targetProcessId;
+            if (string.IsNullOrEmpty(targetProcessName)) return 0;
+            string name = targetProcessName;
+            if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                name = name.Substring(0, name.Length - 4);
+            }
+            Process[] processes = Process.GetProcessesByName(name);
+            try
+            {
+                return processes.Length > 0 ? processes[0].Id : 0;
+            }
+            finally
+            {
+                foreach (Process p in processes) p.Dispose();
+            }
+        }
+
+        private static bool ProcessStillAlive(int pid)
+        {
+            try
+            {
+                using (Process p = Process.GetProcessById(pid))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void OnProcessStopped(IntPtr instance)
+        {
+            processWait.Set();
+        }
+
+        private void OnProcessAudio(IntPtr instance, IntPtr data, uint length)
+        {
+            try
+            {
+                if (!running || data == IntPtr.Zero || length < 2) return;
+                int sampleCount = (int)(length / 2);
+                short[] samples = new short[sampleCount];
+                Marshal.Copy(data, samples, 0, sampleCount);
+
+                int i = 0;
+                while (i + 1 < sampleCount)
+                {
+                    double left = samples[i] / 32768.0;
+                    double right = samples[i + 1] / 32768.0;
+                    processFftBuffer[processPosition++] = (left + right) * 0.5;
+                    if (processPosition >= FftSize)
+                    {
+                        processSmooth = ComputeSpectrum(processFftBuffer, 48000, processSmooth);
+                        int overlap = FftSize / 2;
+                        for (int j = 0; j < overlap; j++)
+                        {
+                            processFftBuffer[j] = processFftBuffer[j + overlap];
+                        }
+                        processPosition = overlap;
+                    }
+                    i += 2;
+                }
+            }
+            catch
+            {
+            }
         }
 
         private void Worker()

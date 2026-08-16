@@ -2,8 +2,12 @@
 service/bin/
 service/obj/
 *.dll
+!service/ApplicationLoopback.dll
 *.exe
 *.log
+
+# Local backups
+backups/
 
 # Editors and OS
 .vs/

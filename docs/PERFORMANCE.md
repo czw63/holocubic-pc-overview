@@ -30,6 +30,8 @@ strategy as the built-in HoloCubic Spectrum app, which redraws a full
 - System metrics poll: 1000 ms
 - Spectrum FFT: log-spaced Goertzel bins over 1024 samples
 - Spectrum send throttle: at most one datagram every 20 ms
+- Process target: Salt Player for Windows process tree when running,
+  otherwise the default render endpoint
 
 ## Tuning
 
