@@ -65,8 +65,10 @@ function Await($operation, $resultType) {
 }
 
 $server = New-Object -TypeName PcBridgeServer.BridgeServer -ArgumentList $Port
+$script:SaltMediaEvent = New-Object System.Threading.AutoResetEvent($false)
 try {
     $server.Start()
+    $server.SaltMediaChanged = [Action]{ [void]$script:SaltMediaEvent.Set() }
 } catch {
     Write-Host ("Could not start bridge on port " + $Port + ": " + $_.Exception.Message)
     exit 1
@@ -527,7 +529,7 @@ try {
         } catch {
             Write-Host ("poll error: " + $_.Exception.Message)
         }
-        Start-Sleep -Milliseconds 250
+        [void]$script:SaltMediaEvent.WaitOne(250)
     }
 } finally {
     $server.Stop()

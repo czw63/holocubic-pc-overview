@@ -55,6 +55,10 @@ Salt Player metadata and the current file path instead of SMTC:
 
 The plugin uses this mode when it autostarts the bridge.
 
+On track changes the SPW plugin calls `/salt-media-changed` on the bridge.
+The bridge wakes its main loop with an event instead of waiting for the next
+250 ms poll, so metadata and cover refresh immediately.
+
 `bridge_server.cs` implements the HTTP/WebSocket server. `audio_capture.cs`
 implements the WASAPI loopback capture and log-spaced spectrum analysis. The
 PowerShell script compiles both files with `Add-Type` at startup.

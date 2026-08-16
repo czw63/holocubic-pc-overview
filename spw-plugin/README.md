@@ -56,6 +56,10 @@ When the plugin starts, it can launch the existing PC Overview bridge as a
 hidden PowerShell process. The bridge receives `-SaltPluginUrl` so it uses
 this plugin for Salt Player media metadata and file paths instead of SMTC.
 
+On track changes the plugin notifies the bridge immediately through
+`/salt-media-changed`, so the HoloCubic refreshes without waiting for a poll
+interval.
+
 Set `PC_OVERVIEW_BRIDGE_DIR` to the `service/` folder of the PC Overview
 project, for example:
 

@@ -15,6 +15,7 @@ public final class SpwPlaybackExtension implements PlaybackExtensionPoint {
     public void onIsPlayingChanged(boolean isPlaying) {
         PlaybackState.playing = isPlaying;
         PluginLog.log("onIsPlayingChanged " + isPlaying);
+        BridgeNotifier.mediaChanged();
     }
 
     @Override
@@ -35,6 +36,7 @@ public final class SpwPlaybackExtension implements PlaybackExtensionPoint {
         PluginLog.log("onBeforeLoadLyrics path=" +
             (mediaItem == null ? "" : mediaItem.getPath()) +
             " title=" + (mediaItem == null ? "" : mediaItem.getTitle()));
+        BridgeNotifier.mediaChanged();
         return null;
     }
 

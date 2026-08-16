@@ -39,6 +39,10 @@ while still integrating cleanly with the player.
 Set the user environment variable `PC_OVERVIEW_BRIDGE_DIR` to the
 `service/` folder to enable plugin-managed bridge autostart.
 
+Track changes are push-based: the plugin calls the bridge's
+`/salt-media-changed` endpoint in its playback callback, and the bridge wakes
+up immediately instead of waiting for the next polling interval.
+
 ## Future Option: Decode the Current File
 
 The workshop API does expose `MediaItem.path`. A plugin can publish that path

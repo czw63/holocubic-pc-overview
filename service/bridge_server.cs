@@ -38,6 +38,8 @@ namespace PcBridgeServer
         private int spectrumLastSentMs = 0;
         private int udpSentCount = 0;
 
+        public Action SaltMediaChanged;
+
         public BridgeServer(int port)
         {
             this.port = port > 0 ? port : 8088;
@@ -526,6 +528,16 @@ namespace PcBridgeServer
 
         private void ServeHttp(NetworkStream stream, string method, string path, string query)
         {
+            if (method == "GET" && path == "/salt-media-changed")
+            {
+                Action action = SaltMediaChanged;
+                if (action != null)
+                {
+                    try { action(); } catch { }
+                }
+                WriteText(stream, "200 OK", "application/json; charset=utf-8", "{\"ok\":true}");
+                return;
+            }
             if (method == "GET" && path == "/state")
             {
                 string body;
