@@ -123,6 +123,7 @@ $script:CoverError = ""
 $script:SaltPluginUrl = $SaltPluginUrl
 $script:MetricsFile = Join-Path $env:TEMP "spw-pc-overview-metrics.txt"
 $script:MetricsStopFile = Join-Path $env:TEMP "spw-pc-overview-metrics.stop"
+$script:MetricsPidFile = Join-Path $env:TEMP "spw-pc-overview-metrics.pid"
 $script:Metrics = $null
 try {
     $script:Metrics = New-Object PcBridgeServer.FastMetrics
@@ -413,6 +414,13 @@ function Start-MetricsSampler {
     if ($script:Metrics) { return }
     if ($script:MetricsSampler -and -not $script:MetricsSampler.HasExited) { return }
     try {
+        $oldPid = 0
+        if (Test-Path -LiteralPath $script:MetricsPidFile) {
+            $oldPid = [int](Get-Content -LiteralPath $script:MetricsPidFile -Raw -ErrorAction Stop)
+        }
+        if ($oldPid -gt 0 -and $oldPid -ne $PID) {
+            Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+        }
         Remove-Item -LiteralPath $script:MetricsStopFile -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $script:MetricsFile -Force -ErrorAction SilentlyContinue
         $samplerPath = Join-Path $script:Dir "metrics_sampler.ps1"
@@ -425,6 +433,7 @@ function Start-MetricsSampler {
                 "-OutputFile", $script:MetricsFile,
                 "-StopFile", $script:MetricsStopFile
             ) -WindowStyle Hidden -PassThru
+        Set-Content -LiteralPath $script:MetricsPidFile -Value ([string]$script:MetricsSampler.Id) -Encoding ASCII
     } catch {
         $script:MetricsSampler = $null
     }
