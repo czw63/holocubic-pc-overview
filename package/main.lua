@@ -1,6 +1,8 @@
 local APP_DIR = "/sd/apps/pc_overview"
 local SETTINGS_PATH = "/sd/apps/settings.json"
 local DEFAULT_WEATHER_LOCATION = "Shanghai"
+local IDLE_CLOCK_DELAY_MS = 10 * 60 * 1000
+local GEO_RETRY_MS = 30 * 60 * 1000
 
 if file and file.exists and not file.exists(APP_DIR .. "/config.lua") then
   local candidates = {
@@ -68,6 +70,9 @@ local S = {
   status = "WAITING",
   status_color = C.warn,
   last_seen_ms = 0,
+  mode = "dashboard",
+  offline_since_ms = 0,
+  last_clock_redraw_ms = 0,
   cpu = nil,
   gpu = nil,
   mem = nil,
@@ -96,6 +101,8 @@ local S = {
   weather_text = "--",
   weather_code = "999",
   weather_inflight = false,
+  geo_inflight = false,
+  geo_failed_at = 0,
   ws_connected = false,
   ws_connecting = false,
   ws_connect_ms = 0,
@@ -446,6 +453,19 @@ end
 
 local function update_music_labels()
   if not UI.title_label then return end
+  if S.mode == "clock" then
+    if S.title_shown ~= "" then
+      set_label_text(UI.title_label, "", pick_cjk_font("", 16))
+      set_label_text(UI.artist_label, "", pick_cjk_font("", 12))
+      set_label_text(UI.album_label, "", pick_cjk_font("", 12))
+      set_label_text(UI.app_label, "", FONT_SMALL)
+      S.title_shown = ""
+      S.artist_shown = ""
+      S.album_shown = ""
+      S.app_shown = ""
+    end
+    return
+  end
   local title = S.title ~= "" and S.title or (S.playing and "NOW PLAYING" or "NO MUSIC")
   if S.title_shown ~= title then
     S.title_shown = title
@@ -762,6 +782,11 @@ local function redraw_spectrum()
   elseif lv_canvas_fill then
     pcall(lv_canvas_fill, UI.spectrum_canvas, C.bg, 255)
   end
+  if S.mode == "clock" then
+    end_frame(UI.spectrum_canvas, frame)
+    S.spectrum_dirty = false
+    return
+  end
   draw_spectrum(UI.spectrum_canvas)
   end_frame(UI.spectrum_canvas, frame)
   S.spectrum_dirty = false
@@ -778,8 +803,35 @@ local function draw_header(cvs)
   draw_cjk_text(cvs, 202, 7, 110, weather, 0xFFC65C, 12, ALIGN_LEFT, 255)
 end
 
+local function draw_clock()
+  if not UI.canvas then return end
+  local cvs = UI.canvas
+  local frame = begin_frame(cvs)
+  if lv_canvas_fill_bg then
+    pcall(lv_canvas_fill_bg, cvs, C.bg, 255)
+  elseif lv_canvas_fill then
+    pcall(lv_canvas_fill, cvs, C.bg, 255)
+  end
+  draw_text(cvs, 10, 10, 130, "PC OFFLINE", C.hot, 10, ALIGN_LEFT, 255)
+  draw_cjk_text(cvs, 150, 10, 160, S.weather_city, C.text, 12, ALIGN_RIGHT, 255)
+  draw_line(cvs, 10, 34, 310, 34, C.line, 255, 1)
+  local weather = S.weather_text .. "  " ..
+    (S.weather_temp and tostring(math_floor(S.weather_temp + 0.5)) .. "\194\176C" or "--\194\176C")
+  weather_icon(cvs, 152, 46, S.weather_code)
+  draw_cjk_text(cvs, 170, 44, 140, weather, 0xFFC65C, 14, ALIGN_LEFT, 255)
+  local clock, date = dashboard_clock()
+  draw_text(cvs, 8, 86, 304, clock, C.text, 48, ALIGN_CENTER, 255)
+  draw_text(cvs, 8, 158, 304, date, C.sub, 16, ALIGN_CENTER, 255)
+  draw_text(cvs, 8, 212, 304, "AUTO RETURN ON RECONNECT", C.dim, 8, ALIGN_CENTER, 255)
+  end_frame(cvs, frame)
+end
+
 redraw = function()
   if not UI.canvas then return end
+  if S.mode == "clock" then
+    draw_clock()
+    return
+  end
   local frame = begin_frame(UI.canvas)
   if lv_canvas_fill_bg then
     pcall(lv_canvas_fill_bg, UI.canvas, C.bg, 255)
@@ -892,6 +944,59 @@ local function request_weather()
   end)
 end
 
+local function resolve_auto_location(city)
+  if city == "" then return end
+  local url = "/v1/weather/cities?location=" .. url_encode(city) .. "&number=1&lang=zh"
+  http.cubicserver.get(url, "Accept-Encoding: gzip\r\n", function(status_code, body)
+    S.geo_inflight = false
+    if state.stopped then return end
+    local doc = status_code == 200 and decode_json(maybe_gunzip(body)) or nil
+    local locations = doc and (doc.locations or doc.location)
+    local first = tostring(doc and doc.code or "") == "200"
+      and type(locations) == "table" and locations[1] or nil
+    local location_id = type(first) == "table" and trim(first.id) or ""
+    if location_id == "" then
+      S.geo_failed_at = now_ms()
+      request_weather()
+      return
+    end
+    local city_name = type(first) == "table" and trim(first.name) or city
+    local saved = decode_json(read_text_file(SETTINGS_PATH)) or {}
+    saved.weather_address = city
+    saved.weather_location_address = city
+    saved.weather_location_id = location_id
+    saved.weather_city = city_name
+    local encoded = encode_json(saved)
+    if encoded then write_text_file(SETTINGS_PATH, encoded) end
+    S.weather_city = city_name ~= "" and city_name or city
+    S.weather_inflight = true
+    request_weather_for(location_id)
+  end)
+end
+
+local function auto_locate_weather()
+  if S.geo_inflight then return end
+  if S.geo_failed_at > 0 and now_ms() - S.geo_failed_at < GEO_RETRY_MS then return end
+  if not http or not http.get then
+    request_weather()
+    return
+  end
+  S.geo_inflight = true
+  http.get("http://ip-api.com/json/?lang=zh-CN&fields=status,city,lat,lon,query", {},
+    function(status_code, body)
+      S.geo_inflight = false
+      if state.stopped then return end
+      local doc = status_code == 200 and decode_json(body) or nil
+      local city = doc and tostring(doc.status or "") == "success" and trim(doc.city) or ""
+      if city == "" then
+        S.geo_failed_at = now_ms()
+        request_weather()
+        return
+      end
+      resolve_auto_location(city)
+    end)
+end
+
 local function base_url()
   return "http://" .. trim(config.host) .. ":" .. tostring(tonumber(config.port) or 8088)
 end
@@ -918,6 +1023,10 @@ local function handle_state(doc)
   S.last_seen_ms = now_ms()
   S.status = "LIVE"
   S.status_color = C.gpu
+  if S.mode == "clock" then
+    S.mode = "dashboard"
+    S.offline_since_ms = 0
+  end
 end
 
 local function handle_ws_message(payload)
@@ -982,6 +1091,10 @@ local function connect_ws()
       S.status = "LIVE"
       S.status_color = C.gpu
       S.last_seen_ms = now_ms()
+      if S.mode == "clock" then
+        S.mode = "dashboard"
+        S.offline_since_ms = 0
+      end
       log("ws_connected")
       pcall(function()
         client:send("{\"type\":\"hello\"}", websocket.TEXT)
@@ -1112,9 +1225,40 @@ end
 
 local function update_stale_status()
   if S.last_seen_ms <= 0 then return end
-  if now_ms() - S.last_seen_ms > (config.stale_ms or 5000) and S.status == "LIVE" then
+  local age = now_ms() - S.last_seen_ms
+  if age > (config.stale_ms or 5000) and S.status == "LIVE" then
     S.status = "STALE"
     S.status_color = C.warn
+  end
+  if age > math_max((config.timeout_ms or 6000), (config.stale_ms or 5000) * 2) then
+    S.status = "OFFLINE"
+    S.status_color = C.hot
+  end
+end
+
+local function update_idle_mode()
+  local now = now_ms()
+  if S.status == "OFFLINE" then
+    if S.offline_since_ms == 0 then
+      S.offline_since_ms = now
+    end
+    if S.mode == "dashboard" and now - S.offline_since_ms >= IDLE_CLOCK_DELAY_MS then
+      S.mode = "clock"
+      S.last_clock_redraw_ms = now
+      redraw()
+    end
+  elseif S.status == "LIVE" then
+    S.offline_since_ms = 0
+    if S.mode == "clock" then
+      S.mode = "dashboard"
+      redraw()
+    end
+  else
+    S.offline_since_ms = 0
+  end
+  if S.mode == "clock" and now - S.last_clock_redraw_ms >= 5000 then
+    S.last_clock_redraw_ms = now
+    redraw()
   end
 end
 
@@ -1129,6 +1273,7 @@ local function start_tick()
   state.tick_timer:alarm(interval, tmr.ALARM_AUTO, function()
     if state.stopped then return end
     update_stale_status()
+    update_idle_mode()
     if S.ws_connected and now_ms() - S.last_seen_ms > (config.stale_ms or 5000) then
       S.status = "STALE"
       S.status_color = C.warn
@@ -1245,11 +1390,23 @@ local function load_cjk_fonts()
 end
 
 local function start_weather()
-  request_weather()
+  local doc = decode_json(read_text_file(SETTINGS_PATH)) or {}
+  local custom = trim(doc.weather_location_id or doc.weather_location_raw or
+    doc.weather_location_address or "")
+  if custom == "" then
+    auto_locate_weather()
+  else
+    request_weather()
+  end
   if not tmr or not tmr.create then return end
   state.weather_timer = tmr.create()
   state.weather_timer:alarm(60000, tmr.ALARM_AUTO, function()
-    if not state.stopped then request_weather() end
+    if state.stopped then return end
+    if S.geo_failed_at > 0 and now_ms() - S.geo_failed_at >= GEO_RETRY_MS then
+      auto_locate_weather()
+    else
+      request_weather()
+    end
   end)
 end
 
@@ -1364,6 +1521,7 @@ if PcWeb and PcWeb.new then
         cover_bytes = #(S.cover_data or ""),
         cover_inflight = S.cover_inflight,
         app_status = S.status,
+        app_mode = S.mode,
         spectrum_frames = S.spectrum_frames or 0,
         spectrum_udp_frames = S.spectrum_udp_frames or 0,
         spectrum_frame_len = S.spectrum_frame_len or 0,
