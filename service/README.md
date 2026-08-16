@@ -34,6 +34,30 @@ Use `-Port 9000` to change the bridge port, `-UdpPort 9001` to change the UDP
 port, and `-NoSpectrum` to disable loopback capture. `-SelfTest` checks RGB565
 cover conversion and exits.
 
+## Service Mode
+
+`-ServiceMode` runs the bridge as a system-monitor-only background service:
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File pc_bridge.ps1 -ServiceMode
+```
+
+CPU/GPU/memory metrics run all the time. Music metadata and spectrum stay
+disabled until Salt Player for Windows is detected, then the watchdog thread
+starts process-loopback spectrum capture and switches to the SPW plugin media
+source. When SPW exits, spectrum stops and music state clears.
+
+Register or remove a hidden logon autostart entry:
+
+```powershell
+.\register-startup.ps1
+.\register-startup.ps1 -Unregister
+```
+
+The startup entry launches the bridge with `-ServiceMode`. Set
+`PC_OVERVIEW_AUTOSTART_BRIDGE=false` when using it, so the SPW plugin does not
+launch a second bridge.
+
 When `Salt Player for Windows` is running, the bridge automatically captures
 only that process tree with the Windows process-loopback API. Override the
 target with:

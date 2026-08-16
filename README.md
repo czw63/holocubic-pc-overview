@@ -50,6 +50,10 @@ It listens on `0.0.0.0:8088` by default and serves:
 - `http://<pc-ip>:8088/cover` RGB565 cover bytes
 - `ws://<pc-ip>:8088/ws` state and spectrum WebSocket
 
+`-ServiceMode` runs the bridge as a logon background service: system metrics
+stay on all the time, while music metadata and spectrum activate automatically
+when Salt Player for Windows starts. See `service/README.md`.
+
 Allow port 8088 through the Windows Firewall for private networks. The music
 app must publish SMTC metadata; most desktop players do.
 

@@ -45,6 +45,26 @@ holocubic-pc-overview/
 service\start_bridge.bat
 ```
 
+`-ServiceMode` 是推荐的后台模式：桥接随系统登录自启，只启动 CPU/GPU/内存
+监控；音乐信息和频谱会等到 Salt Player for Windows 运行后再自动开启。
+SPW 退出后，频谱停止，音乐信息清空，系统指标继续工作。
+
+注册/取消开机自启：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File service\register-startup.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File service\register-startup.ps1 -Unregister
+```
+
+脚本会在启动文件夹创建一个隐藏启动项，登录后自动运行：
+
+```text
+powershell.exe -File pc_bridge.ps1 -ServiceMode
+```
+
+使用系统自启时，建议设置 `PC_OVERVIEW_AUTOSTART_BRIDGE=false`，避免 SPW
+插件再拉起一个重复的桥接进程。
+
 默认监听 `0.0.0.0:8088`，主要接口：
 
 ```text
@@ -155,10 +175,15 @@ config.timezone = "CST-8"        -- 时区
 -UdpPort 9001             改 UDP 频谱端口
 -CoverSize 96             封面尺寸
 -SaltPluginUrl URL        启用 SPW 插件媒体源
+-ServiceMode              系统自启模式：仅系统指标常驻，SPW 运行后开启音乐/频谱
+-SmtcFallback             在 ServiceMode 下允许回退到 SMTC（默认关闭）
 -SpectrumProcessName 名称 指定要采集的进程名
 -NoSpectrum               关闭频谱采集
 -SelfTest                 自检 RGB565 转换后退出
 ```
+
+ServiceMode 下桥接会以 1 秒间隔检测 SPW 进程和插件 API：检测到后启动
+进程环回频谱并切换到插件媒体源；SPW 退出后停止频谱并清空音乐状态。
 
 ## 协议摘要
 

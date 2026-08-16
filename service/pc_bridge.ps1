@@ -5,6 +5,8 @@ param(
     [int]$SpectrumProcessId = 0,
     [string]$SpectrumProcessName = "",
     [string]$SaltPluginUrl = "",
+    [switch]$ServiceMode,
+    [switch]$SmtcFallback,
     [switch]$NoSpectrum,
     [switch]$SelfTest
 )
@@ -74,21 +76,122 @@ try {
     exit 1
 }
 
-if (-not $NoSpectrum) {
-    if ($SpectrumProcessId -le 0 -and [string]::IsNullOrEmpty($SpectrumProcessName)) {
-        $spw = Get-Process -Name "Salt Player for Windows" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($spw) {
-            $SpectrumProcessName = "Salt Player for Windows"
-            Write-Host "Auto-detected Salt Player for Windows; capturing only that process."
+if ($ServiceMode -and -not $SaltPluginUrl) {
+    $envPlugin = [Environment]::GetEnvironmentVariable("PC_OVERVIEW_SALT_PLUGIN_URL")
+    if (-not [string]::IsNullOrEmpty($envPlugin)) {
+        $SaltPluginUrl = $envPlugin
+    } else {
+        $SaltPluginUrl = "http://127.0.0.1:8091"
+    }
+}
+$script:SaltPluginUrl = $SaltPluginUrl
+
+function Test-SaltPlayerRunning {
+    try {
+        return @(Get-Process -Name "Salt Player for Windows" -ErrorAction Stop).Count -gt 0
+    } catch {
+        return $false
+    }
+}
+
+$script:ServiceMode = [bool]$ServiceMode
+$script:SmtcFallback = [bool]$SmtcFallback
+$script:SpectrumEnabled = -not $NoSpectrum
+$script:SaltPlayerAvailable = [ref](Test-SaltPlayerRunning)
+$script:SpwWatchThread = $null
+
+if ($script:SpectrumEnabled) {
+    if (-not $script:ServiceMode) {
+        if ($SpectrumProcessId -le 0 -and [string]::IsNullOrEmpty($SpectrumProcessName)) {
+            $spw = Get-Process -Name "Salt Player for Windows" -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($spw) {
+                $SpectrumProcessName = "Salt Player for Windows"
+                Write-Host "Auto-detected Salt Player for Windows; capturing only that process."
+            }
+        }
+    } elseif (-not $script:SaltPlayerAvailable.Value) {
+        Write-Host "Service mode: spectrum will start when Salt Player for Windows is running."
+    }
+    if ($script:ServiceMode -and -not $script:SaltPlayerAvailable.Value) {
+        # Spectrum starts later from the SPW watchdog thread.
+    } else {
+        try {
+            $server.StartSpectrum($UdpPort, $SpectrumProcessId, $SpectrumProcessName)
+            Write-Host "Loopback spectrum capture started."
+        } catch {
+            Write-Host ("Spectrum disabled: " + $_.Exception.Message)
         }
     }
-    try {
-        $server.StartSpectrum($UdpPort, $SpectrumProcessId, $SpectrumProcessName)
-        Write-Host "Loopback spectrum capture started."
-    } catch {
-        Write-Host ("Spectrum disabled: " + $_.Exception.Message)
+}
+
+if ($script:ServiceMode) {
+    $watchScript = {
+        param(
+            [int]$UdpPort,
+            [PcBridgeServer.BridgeServer]$BridgeServer,
+            [System.Threading.AutoResetEvent]$WakeEvent,
+            [ref]$Available,
+            [string]$PluginUrl,
+            [bool]$SpectrumEnabled
+        )
+        $ErrorActionPreference = "SilentlyContinue"
+        $wasAvailable = [bool]$Available.Value
+        while ($true) {
+            $available = @(Get-Process -Name "Salt Player for Windows" -ErrorAction SilentlyContinue).Count -gt 0
+            if ($available -and $PluginUrl) {
+                try {
+                    $client = New-Object System.Net.WebClient
+                    try {
+                        $data = $client.DownloadString($PluginUrl + "/api/media")
+                        $available = [bool]$data
+                    } finally {
+                        $client.Dispose()
+                    }
+                } catch {
+                    $available = $false
+                }
+            }
+            if ($available -ne $wasAvailable) {
+                $wasAvailable = $available
+                try {
+                    if ($available -and $SpectrumEnabled) {
+                        $BridgeServer.StartSpectrum($UdpPort, 0, "Salt Player for Windows")
+                        Write-BridgeDebug "spw watchdog: spectrum started"
+                    } elseif (-not $available) {
+                        $BridgeServer.Stop()
+                        Write-BridgeDebug "spw watchdog: spectrum stopped"
+                    }
+                } catch {
+                    Write-BridgeDebug ("spw watchdog error: " + $_.Exception.Message)
+                }
+                try {
+                    $Available.Value = $available
+                    $WakeEvent.Set()
+                } catch {
+                }
+            }
+            Start-Sleep -Milliseconds 1000
+        }
     }
+    $threadBody = [System.Threading.ParameterizedThreadStart]{
+        param($data)
+        & $data.Script $data.UdpPort $data.Server $data.Event $data.Available $data.PluginUrl $data.SpectrumEnabled
+    }
+    $script:SpwWatchThread = New-Object System.Threading.Thread($threadBody)
+    $script:SpwWatchThread.IsBackground = $true
+    $script:SpwWatchThread.Name = "spw-watchdog"
+    $watchData = @{
+        Script = $watchScript
+        UdpPort = $UdpPort
+        Server = $server
+        Event = $script:SaltMediaEvent
+        Available = $script:SaltPlayerAvailable
+        PluginUrl = [string]$SaltPluginUrl
+        SpectrumEnabled = $script:SpectrumEnabled
+    }
+    $script:SpwWatchThread.Start($watchData)
+    Write-Host "SPW watchdog started (service mode)."
 }
 
 $script:State = @{
@@ -120,7 +223,6 @@ $script:LastMetricsMs = 0
 $script:LastStateKey = ""
 $script:LastStateSentMs = 0
 $script:CoverError = ""
-$script:SaltPluginUrl = $SaltPluginUrl
 $script:MetricsFile = Join-Path $env:TEMP "spw-pc-overview-metrics.txt"
 $script:MetricsStopFile = Join-Path $env:TEMP "spw-pc-overview-metrics.stop"
 $script:MetricsPidFile = Join-Path $env:TEMP "spw-pc-overview-metrics.pid"
@@ -497,12 +599,15 @@ function Update-SystemMetrics {
 function Update-Media {
     $updateSw = [System.Diagnostics.Stopwatch]::StartNew()
     $media = $null
-    if ($script:SaltPluginUrl) {
+    if ($script:ServiceMode -and -not $script:SaltPlayerAvailable.Value) {
+        Write-BridgeDebug "service mode: salt player not running"
+        $media = $null
+    } elseif ($script:SaltPluginUrl) {
         $media = Get-SaltPluginMedia
-        if (-not $media) {
+        if (-not $media -and ($script:SmtcFallback -or -not $script:ServiceMode)) {
             $media = Get-MediaSnapshot
         }
-    } else {
+    } elseif (-not $script:ServiceMode) {
         $media = Get-MediaSnapshot
     }
     if ($media) {
