@@ -66,6 +66,50 @@ $rootLib = Join-Path $rootDir "lib"
 New-Item -ItemType Directory -Force -Path $rootLib | Out-Null
 Set-Content -LiteralPath (Join-Path $rootLib ".keep") -Value "" -Encoding Ascii
 
-Compress-Archive -Path (Join-Path $rootDir "*") -DestinationPath $pluginZip -Force
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+function Add-ZipFile {
+    param(
+        [System.IO.Compression.ZipArchive]$Archive,
+        [string]$EntryName,
+        [string]$SourcePath
+    )
+    $entry = $Archive.CreateEntry($EntryName, [System.IO.Compression.CompressionLevel]::Optimal)
+    $entryStream = $entry.Open()
+    $sourceStream = [System.IO.File]::OpenRead($SourcePath)
+    try {
+        $sourceStream.CopyTo($entryStream)
+    } finally {
+        $sourceStream.Dispose()
+        $entryStream.Dispose()
+    }
+}
+
+function Add-ZipTree {
+    param(
+        [System.IO.Compression.ZipArchive]$Archive,
+        [string]$Directory,
+        [string]$Prefix
+    )
+    foreach ($item in Get-ChildItem -LiteralPath $Directory) {
+        if ($item.PSIsContainer) {
+            $name = $Prefix + $item.Name + "/"
+            $null = $Archive.CreateEntry($name)
+            Add-ZipTree -Archive $Archive -Directory $item.FullName -Prefix $name
+        } else {
+            Add-ZipFile -Archive $Archive -EntryName ($Prefix + $item.Name) -SourcePath $item.FullName
+        }
+    }
+}
+
+$zipStream = [System.IO.File]::Create($pluginZip)
+$archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+    Add-ZipTree -Archive $archive -Directory $rootDir -Prefix ""
+} finally {
+    $archive.Dispose()
+    $zipStream.Dispose()
+}
 
 Write-Host "Built $pluginZip"
