@@ -10,6 +10,8 @@ cube into a PC status display:
 - Live WASAPI spectrum with smooth local bar rendering; when Salt Player for
   Windows is running, only its audio process is captured
 
+中文文档：[README_ZH.md](README_ZH.md)
+
 ![Preview](preview_320x240.png)
 
 ## Repository Layout
