@@ -56,13 +56,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File service\register-startup
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File service\register-startup.ps1 -Unregister
 ```
 
-脚本会在启动文件夹创建一个隐藏启动项，登录后自动运行：
+脚本会创建一个登录触发的计划任务，登录后自动运行：
 
 ```text
 powershell.exe -File pc_bridge.ps1 -ServiceMode
 ```
 
-使用系统自启时，建议设置 `PC_OVERVIEW_AUTOSTART_BRIDGE=false`，避免 SPW
+建议设置 `PC_OVERVIEW_AUTOSTART_BRIDGE=false`（插件会读取该变量），避免 SPW
 插件再拉起一个重复的桥接进程。
 
 默认监听 `0.0.0.0:8088`，主要接口：

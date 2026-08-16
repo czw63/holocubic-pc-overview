@@ -136,6 +136,12 @@ if ($script:ServiceMode) {
             [bool]$SpectrumEnabled
         )
         $ErrorActionPreference = "SilentlyContinue"
+        $debugPath = Join-Path $env:TEMP "spw-pc-overview-bridge-debug.log"
+        $debugWrite = {
+            param($message)
+            Add-Content -LiteralPath $debugPath -Value (
+                (Get-Date -Format "HH:mm:ss.fff") + " " + $message) -Encoding UTF8
+        }
         $wasAvailable = [bool]$Available.Value
         while ($true) {
             $available = @(Get-Process -Name "Salt Player for Windows" -ErrorAction SilentlyContinue).Count -gt 0
@@ -157,13 +163,13 @@ if ($script:ServiceMode) {
                 try {
                     if ($available -and $SpectrumEnabled) {
                         $BridgeServer.StartSpectrum($UdpPort, 0, "Salt Player for Windows")
-                        Write-BridgeDebug "spw watchdog: spectrum started"
+                        & $debugWrite "spw watchdog: spectrum started"
                     } elseif (-not $available) {
                         $BridgeServer.Stop()
-                        Write-BridgeDebug "spw watchdog: spectrum stopped"
+                        & $debugWrite "spw watchdog: spectrum stopped"
                     }
                 } catch {
-                    Write-BridgeDebug ("spw watchdog error: " + $_.Exception.Message)
+                    & $debugWrite ("spw watchdog error: " + $_.Exception.Message)
                 }
                 try {
                     $Available.Value = $available
@@ -174,23 +180,19 @@ if ($script:ServiceMode) {
             Start-Sleep -Milliseconds 1000
         }
     }
-    $threadBody = [System.Threading.ParameterizedThreadStart]{
-        param($data)
-        & $data.Script $data.UdpPort $data.Server $data.Event $data.Available $data.PluginUrl $data.SpectrumEnabled
-    }
-    $script:SpwWatchThread = New-Object System.Threading.Thread($threadBody)
-    $script:SpwWatchThread.IsBackground = $true
-    $script:SpwWatchThread.Name = "spw-watchdog"
-    $watchData = @{
-        Script = $watchScript
-        UdpPort = $UdpPort
-        Server = $server
-        Event = $script:SaltMediaEvent
-        Available = $script:SaltPlayerAvailable
-        PluginUrl = [string]$SaltPluginUrl
-        SpectrumEnabled = $script:SpectrumEnabled
-    }
-    $script:SpwWatchThread.Start($watchData)
+    $watchRunspace = [runspacefactory]::CreateRunspace()
+    $watchRunspace.Open()
+    $watchPowerShell = [powershell]::Create()
+    $watchPowerShell.Runspace = $watchRunspace
+    $null = $watchPowerShell.AddScript($watchScript)
+    $null = $watchPowerShell.AddArgument([int]$UdpPort)
+    $null = $watchPowerShell.AddArgument($server)
+    $null = $watchPowerShell.AddArgument($script:SaltMediaEvent)
+    $null = $watchPowerShell.AddArgument($script:SaltPlayerAvailable)
+    $null = $watchPowerShell.AddArgument([string]$SaltPluginUrl)
+    $null = $watchPowerShell.AddArgument($script:SpectrumEnabled)
+    $script:SpwWatchThread = $watchPowerShell
+    $null = $watchPowerShell.BeginInvoke()
     Write-Host "SPW watchdog started (service mode)."
 }
 

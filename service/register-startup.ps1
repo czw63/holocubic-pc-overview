@@ -1,5 +1,5 @@
 param(
-    [string]$StartupName = "HoloCubic PC Overview Bridge",
+    [string]$TaskName = "HoloCubicPCOverviewBridge",
     [switch]$Unregister
 )
 
@@ -14,23 +14,29 @@ if (-not (Test-Path -LiteralPath $bridge)) {
     exit 1
 }
 
-$startupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
-$vbsPath = Join-Path $startupDir ($StartupName + ".vbs")
+$arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$bridge`" -ServiceMode"
 
 if ($Unregister) {
-    Remove-Item -LiteralPath $vbsPath -Force -ErrorAction SilentlyContinue
-    Write-Host "Removed startup entry $vbsPath"
+    schtasks.exe /Delete /TN $TaskName /F | Out-Null
+    Write-Host "Removed scheduled task $TaskName"
     exit 0
 }
 
-if (-not (Test-Path -LiteralPath $startupDir)) {
-    Write-Host "Startup folder not found: $startupDir"
-    exit 1
-}
-
-$vbs = @"
-Set shell = CreateObject("WScript.Shell")
-shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$bridge"" -ServiceMode", 0, False
-"@
-Set-Content -LiteralPath $vbsPath -Value $vbs -Encoding ASCII
-Write-Host "Registered logon autostart: $vbsPath"
+$service = New-Object -ComObject Schedule.Service
+$service.Connect()
+$folder = $service.GetFolder("\")
+$task = $service.NewTask(0)
+$task.RegistrationInfo.Description = "HoloCubic PC Overview bridge service mode"
+$task.Settings.StartWhenAvailable = $true
+$task.Settings.DisallowStartIfOnBatteries = $false
+$task.Settings.StopIfGoingOnBatteries = $false
+$task.Settings.ExecutionTimeLimit = "PT0S"
+$trigger = $task.Triggers.Create(9)
+$trigger.UserId = "$env:USERDOMAIN\$env:USERNAME"
+$action = $task.Actions.Create(0)
+$action.Path = "powershell.exe"
+$action.Arguments = $arguments
+$action.WorkingDirectory = $dir
+$folder.RegisterTaskDefinition($TaskName, $task, 6, $null, $null, 3) | Out-Null
+Write-Host "Registered logon autostart task $TaskName"
+Write-Host "Action: powershell.exe $arguments"

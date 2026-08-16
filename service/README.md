@@ -47,14 +47,14 @@ disabled until Salt Player for Windows is detected, then the watchdog thread
 starts process-loopback spectrum capture and switches to the SPW plugin media
 source. When SPW exits, spectrum stops and music state clears.
 
-Register or remove a hidden logon autostart entry:
+Register or remove a logon scheduled task:
 
 ```powershell
 .\register-startup.ps1
 .\register-startup.ps1 -Unregister
 ```
 
-The startup entry launches the bridge with `-ServiceMode`. Set
+The task launches the bridge with `-ServiceMode`. Set
 `PC_OVERVIEW_AUTOSTART_BRIDGE=false` when using it, so the SPW plugin does not
 launch a second bridge.
 
