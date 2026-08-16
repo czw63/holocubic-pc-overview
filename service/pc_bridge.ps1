@@ -20,6 +20,12 @@ $script:Dir = $PSScriptRoot
 if ([string]::IsNullOrEmpty($script:Dir)) {
     $script:Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
+Set-Location -LiteralPath $script:Dir
+$env:PATH = $script:Dir + ";" + $env:PATH
+try {
+    [Environment]::CurrentDirectory = $script:Dir
+} catch {
+}
 
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 

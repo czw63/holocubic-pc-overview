@@ -19,12 +19,14 @@ public final class SpwPcOverviewPlugin extends Plugin {
         server = new HttpApiServer(port);
         try {
             server.start();
+            PluginLog.log("SPW plugin HTTP API started on 127.0.0.1:" + port);
             System.out.println("[pc-overview] SPW plugin HTTP API started on 127.0.0.1:" + port);
             if (!"false".equalsIgnoreCase(System.getenv("PC_OVERVIEW_AUTOSTART_BRIDGE"))) {
                 bridge = new BridgeLauncher(port);
                 bridge.start();
             }
         } catch (Exception ex) {
+            PluginLog.log("SPW plugin HTTP start failed: " + ex.getMessage());
             System.out.println("[pc-overview] SPW plugin HTTP start failed: " + ex.getMessage());
             server = null;
         }
@@ -32,6 +34,7 @@ public final class SpwPcOverviewPlugin extends Plugin {
 
     @Override
     public void stop() {
+        PluginLog.log("SPW plugin stopping");
         if (bridge != null) {
             bridge.stop();
             bridge = null;

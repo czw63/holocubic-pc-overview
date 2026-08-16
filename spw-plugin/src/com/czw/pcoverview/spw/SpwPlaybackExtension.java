@@ -8,16 +8,19 @@ public final class SpwPlaybackExtension implements PlaybackExtensionPoint {
     @Override
     public void onStateChanged(State state) {
         PlaybackState.state = state == null ? "Idle" : state.name();
+        PluginLog.log("onStateChanged " + PlaybackState.state);
     }
 
     @Override
     public void onIsPlayingChanged(boolean isPlaying) {
         PlaybackState.playing = isPlaying;
+        PluginLog.log("onIsPlayingChanged " + isPlaying);
     }
 
     @Override
     public void onSeekTo(long position) {
         PlaybackState.position = Math.max(0L, position);
+        PluginLog.log("onSeekTo " + PlaybackState.position);
     }
 
     @Override
@@ -29,6 +32,9 @@ public final class SpwPlaybackExtension implements PlaybackExtensionPoint {
     public String onBeforeLoadLyrics(MediaItem mediaItem) {
         PlaybackState.media = mediaItem;
         PlaybackState.position = 0L;
+        PluginLog.log("onBeforeLoadLyrics path=" +
+            (mediaItem == null ? "" : mediaItem.getPath()) +
+            " title=" + (mediaItem == null ? "" : mediaItem.getTitle()));
         return null;
     }
 
@@ -44,5 +50,6 @@ public final class SpwPlaybackExtension implements PlaybackExtensionPoint {
     @Override
     public void onPositionUpdated(long position) {
         PlaybackState.position = Math.max(0L, position);
+        PluginLog.log("onPositionUpdated " + PlaybackState.position);
     }
 }
