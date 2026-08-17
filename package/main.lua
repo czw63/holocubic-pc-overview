@@ -813,17 +813,21 @@ local function draw_clock()
   elseif lv_canvas_fill then
     pcall(lv_canvas_fill, cvs, C.bg, 255)
   end
-  draw_text(cvs, 10, 10, 130, "PC OFFLINE", C.hot, 10, ALIGN_LEFT, 255)
-  draw_cjk_text(cvs, 150, 10, 160, S.weather_city, C.text, 12, ALIGN_RIGHT, 255)
-  draw_line(cvs, 10, 34, 310, 34, C.line, 255, 1)
-  local weather = S.weather_text .. "  " ..
-    (S.weather_temp and tostring(math_floor(S.weather_temp + 0.5)) .. "\194\176C" or "--\194\176C")
-  weather_icon(cvs, 152, 46, S.weather_code)
-  draw_cjk_text(cvs, 170, 44, 140, weather, 0xFFC65C, 14, ALIGN_LEFT, 255)
+  draw_text(cvs, 12, 10, 90, "OFFLINE", C.hot, 9, ALIGN_LEFT, 255)
+  draw_cjk_text(cvs, 118, 8, 190, S.weather_city, C.text, 12, ALIGN_RIGHT, 255)
+  draw_line(cvs, 12, 31, 308, 31, C.line, 255, 1)
+
+  local temp = S.weather_temp and
+    tostring(math_floor(S.weather_temp + 0.5)) .. "\194\176C" or "--\194\176C"
+  draw_text(cvs, 52, 48, 118, temp, 0xFFC65C, 24, ALIGN_LEFT, 255)
+  weather_icon(cvs, 28, 54, S.weather_code)
+  draw_cjk_text(cvs, 52, 79, 150, S.weather_text, C.sub, 13, ALIGN_LEFT, 255)
+
   local clock, date = dashboard_clock()
-  draw_text(cvs, 8, 86, 304, clock, C.text, 48, ALIGN_CENTER, 255)
-  draw_text(cvs, 8, 158, 304, date, C.sub, 16, ALIGN_CENTER, 255)
-  draw_text(cvs, 8, 212, 304, "AUTO RETURN ON RECONNECT", C.dim, 8, ALIGN_CENTER, 255)
+  draw_text(cvs, 8, 108, 304, clock, C.text, 54, ALIGN_CENTER, 255)
+  draw_text(cvs, 8, 178, 304, date, C.sub, 14, ALIGN_CENTER, 255)
+  draw_line(cvs, 96, 210, 224, 210, C.line, 255, 1)
+  draw_text(cvs, 8, 218, 304, "PC OVERVIEW", C.dim, 8, ALIGN_CENTER, 255)
   end_frame(cvs, frame)
 end
 
