@@ -71,6 +71,8 @@ local state = {
   icon = "999",
   zh12 = nil,
   zh16 = nil,
+  time_font = nil,
+  tiny_font = nil,
   root = nil,
   icon_img = nil,
   time_label = nil,
@@ -78,6 +80,7 @@ local state = {
   weather_label = nil,
   temp_label = nil,
   date_label = nil,
+  status_label = nil,
 }
 
 local MAIN_STYLE = (rawget(_G, "LV_PART_MAIN") or 0) | (rawget(_G, "LV_STATE_DEFAULT") or 0)
@@ -89,6 +92,7 @@ local C = {
   text = 0xF4F7FB,
   sub = 0x9FADB9,
   temp = 0xFFC65C,
+  accent = 0x35D0BA,
   hot = 0xFF5D5D,
   line = 0x1C2832,
 }
@@ -117,6 +121,17 @@ local function make_label(parent, x, y, w, h, font, color, align)
   if lv_obj_set_style_bg_opa then pcall(lv_obj_set_style_bg_opa, label, 0, MAIN_STYLE) end
   set_text(label, "", font)
   return label
+end
+
+local function make_line(parent, x, y, w, color)
+  if not lv_obj_create then return nil end
+  local line = lv_obj_create(parent)
+  if lv_obj_set_pos then pcall(lv_obj_set_pos, line, x, y) end
+  if lv_obj_set_size then pcall(lv_obj_set_size, line, w, 1) end
+  if lv_obj_set_style_bg_color then pcall(lv_obj_set_style_bg_color, line, color, MAIN_STYLE) end
+  if lv_obj_set_style_bg_opa then pcall(lv_obj_set_style_bg_opa, line, 255, MAIN_STYLE) end
+  if lv_obj_set_style_border_width then pcall(lv_obj_set_style_border_width, line, 0, MAIN_STYLE) end
+  return line
 end
 
 local function local_time()
@@ -160,6 +175,7 @@ local function request_weather_now(location)
         set_icon(doc.now.icon)
         set_text(state.temp_label, state.temp and string.format("%d°C", math.floor(state.temp + 0.5)) or "--°C", state.zh16)
         set_text(state.weather_label, state.weather, state.zh12)
+        set_text(state.city_label, weather_city, state.zh12)
       end
     end)
 end
@@ -183,6 +199,7 @@ local function request_weather()
       if id ~= "" then
         weather_id = id
         weather_city = trim(first.name) ~= "" and trim(first.name) or weather_city
+        set_text(state.city_label, weather_city, state.zh12)
         request_weather_now(id)
       end
     end)
@@ -212,22 +229,29 @@ local function build_ui()
 
   state.zh12 = font_load(WEATHER_FONT_ZH_12)
   state.zh16 = font_load(WEATHER_FONT_ZH_16)
+  state.time_font = font_load("/sd/apps/weather/font/weather_time_40.bin")
+  state.tiny_font = font_load("/sd/apps/weather/font/weather_tiny_10.bin")
   local ja12 = font_load(WEATHER_FONT_JA_12)
   local ja16 = font_load(WEATHER_FONT_JA_16)
   state.zh12 = state.zh12 or ja12
   state.zh16 = state.zh16 or ja16
 
-  state.time_label = make_label(root, 8, 86, 304, 58, nil, C.text, ALIGN_CENTER)
-  state.city_label = make_label(root, 118, 8, 190, 22, state.zh12, C.text, ALIGN_RIGHT)
-  state.weather_label = make_label(root, 52, 78, 170, 22, state.zh12, C.sub, ALIGN_LEFT)
-  state.temp_label = make_label(root, 52, 48, 118, 30, state.zh16, C.temp, ALIGN_LEFT)
-  state.date_label = make_label(root, 8, 178, 304, 24, nil, C.sub, ALIGN_CENTER)
-  local offline = make_label(root, 12, 10, 90, 18, nil, C.hot, ALIGN_LEFT)
-  set_text(offline, "OFFLINE")
+  state.status_label = make_label(root, 12, 9, 110, 18, state.tiny_font, C.hot, ALIGN_LEFT)
+  state.city_label = make_label(root, 128, 7, 180, 24, state.zh12, C.text, ALIGN_RIGHT)
+  make_line(root, 12, 31, 296, C.line)
+
+  state.time_label = make_label(root, 8, 101, 304, 54, state.time_font, C.text, ALIGN_CENTER)
+  state.weather_label = make_label(root, 78, 72, 130, 22, state.zh12, C.sub, ALIGN_LEFT)
+  state.temp_label = make_label(root, 78, 43, 120, 34, state.zh16, C.temp, ALIGN_LEFT)
+  state.date_label = make_label(root, 8, 169, 304, 24, state.zh12, C.sub, ALIGN_CENTER)
+  make_line(root, 82, 204, 156, C.line)
+  local footer = make_label(root, 8, 214, 304, 16, state.tiny_font, C.sub, ALIGN_CENTER)
+  set_text(state.status_label, "PC OFFLINE")
+  set_text(footer, "AUTO RETURN ON RECONNECT")
   if lv_img_create then
     state.icon_img = lv_img_create(root)
-    if lv_obj_set_pos then pcall(lv_obj_set_pos, state.icon_img, 18, 43) end
-    if lv_img_set_zoom then pcall(lv_img_set_zoom, state.icon_img, 200) end
+    if lv_obj_set_pos then pcall(lv_obj_set_pos, state.icon_img, 18, 42) end
+    if lv_img_set_zoom then pcall(lv_img_set_zoom, state.icon_img, 220) end
     if lv_img_set_src then pcall(lv_img_set_src, state.icon_img, WEATHER_ASSET .. "999.png") end
   end
   set_text(state.city_label, weather_city)
@@ -244,6 +268,8 @@ local function stop()
   if lv_font_free then
     if state.zh12 then pcall(lv_font_free, state.zh12) end
     if state.zh16 then pcall(lv_font_free, state.zh16) end
+    if state.time_font then pcall(lv_font_free, state.time_font) end
+    if state.tiny_font then pcall(lv_font_free, state.tiny_font) end
   end
 end
 
