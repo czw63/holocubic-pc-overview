@@ -1304,6 +1304,13 @@ local function update_idle_mode()
       S.offline_since_ms = now
     end
     if S.mode == "dashboard" and now - S.offline_since_ms >= IDLE_CLOCK_DELAY_MS then
+      if app and app.launch then
+        local ok, launched = pcall(app.launch, "pc-weather-clock")
+        if ok and launched ~= false then
+          state.stopped = true
+          return
+        end
+      end
       S.mode = "clock"
       S.last_clock_redraw_ms = now
       redraw()

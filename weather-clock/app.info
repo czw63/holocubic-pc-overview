@@ -1,0 +1,5 @@
+name = PC Weather Clock
+kind = app
+entry = main.lua
+description = Offline weather clock for PC Overview
+version = 1.0.0

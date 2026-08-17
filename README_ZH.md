@@ -341,6 +341,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File service\pc_bridge.ps1 -S
 - [service/README.md](service/README.md)：桥接运行说明
 - [spw-plugin/README.md](spw-plugin/README.md)：SPW 插件说明
 
+## 离线天气钟
+
+项目包含独立的 `weather-clock/` 应用。`pc-overview` 与电脑桥接断开满
+10 分钟后会启动 `pc-weather-clock`；天气钟检测到桥接恢复后会自动启动回
+`pc-overview`。两个 App 分开管理画面和资源，避免在运行中的 canvas 上动态
+叠加天气图片。
+
+部署时同时复制：
+
+- `package/` 到 `/sd/apps/pc-overview/`
+- `weather-clock/` 到 `/sd/apps/pc-weather-clock/`
+
+然后重扫设备 App。天气钟会复用设备已有的 `weather` App 图标和字体资源。
+
 ## License
 
 MIT
