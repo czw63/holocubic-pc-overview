@@ -24,6 +24,7 @@ if _G.__pc_overview and _G.__pc_overview.stop then
 end
 
 local config = dofile(APP_DIR .. "/config.lua")
+IDLE_CLOCK_DELAY_MS = tonumber(config.idle_clock_delay_ms) or IDLE_CLOCK_DELAY_MS
 local PcWeb = nil
 
 if file and file.exists and file.exists(APP_DIR .. "/web.lua") then
@@ -232,7 +233,7 @@ local function trim(value)
 end
 
 local function read_text_file(path)
-  if not file then return nil end
+  if not file or type(path) ~= "string" or path == "" then return nil end
   if file.getcontents then
     local ok, raw = pcall(file.getcontents, path)
     if ok and type(raw) == "string" then return raw end
@@ -251,7 +252,7 @@ local function read_text_file(path)
 end
 
 local function write_text_file(path, raw)
-  if not file or type(raw) ~= "string" then return false end
+  if not file or type(path) ~= "string" or path == "" or type(raw) ~= "string" then return false end
   if file.putcontents then
     local ok, saved = pcall(file.putcontents, path, raw)
     if ok and saved then return true end
