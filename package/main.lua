@@ -1,6 +1,6 @@
 local APP_DIR = "/sd/apps/pc_overview"
 local SETTINGS_PATH = "/sd/apps/settings.json"
-local DEFAULT_WEATHER_LOCATION = "Shanghai"
+local DEFAULT_WEATHER_LOCATION = ""
 local IDLE_CLOCK_DELAY_MS = 10 * 60 * 1000
 local GEO_RETRY_MS = 30 * 60 * 1000
 
@@ -1272,6 +1272,13 @@ local function start_tick()
   end
   state.tick_timer:alarm(interval, tmr.ALARM_AUTO, function()
     if state.stopped then return end
+    if app and app.exiting then
+      local ok, exiting = pcall(app.exiting)
+      if ok and exiting then
+        state.stop()
+        return
+      end
+    end
     update_stale_status()
     update_idle_mode()
     if S.ws_connected and now_ms() - S.last_seen_ms > (config.stale_ms or 5000) then
@@ -1324,6 +1331,13 @@ local function start_spectrum_timer()
   state.spectrum_timer = tmr.create()
   state.spectrum_timer:alarm(20, tmr.ALARM_AUTO, function()
     if state.stopped then return end
+    if app and app.exiting then
+      local ok, exiting = pcall(app.exiting)
+      if ok and exiting then
+        state.stop()
+        return
+      end
+    end
     if S.spectrum_dirty and UI.spectrum_canvas then
       redraw_spectrum()
     end
