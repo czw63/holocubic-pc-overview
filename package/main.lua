@@ -123,6 +123,7 @@ local S = {
 local UI = {
   canvas = nil,
   spectrum_canvas = nil,
+  clock_weather_img = nil,
   title_label = nil,
   artist_label = nil,
   album_label = nil,
@@ -804,6 +805,30 @@ local function draw_header(cvs)
   draw_cjk_text(cvs, 202, 7, 110, weather, 0xFFC65C, 12, ALIGN_LEFT, 255)
 end
 
+local function set_obj_hidden(obj, hidden)
+  local flag = rawget(_G, "LV_OBJ_FLAG_HIDDEN")
+  if not obj or not flag then return false end
+  if hidden and lv_obj_add_flag then
+    call(lv_obj_add_flag, obj, flag)
+    return true
+  end
+  if not hidden and lv_obj_clear_flag then
+    call(lv_obj_clear_flag, obj, flag)
+    return true
+  end
+  return false
+end
+
+local function weather_asset_path(code)
+  return "S:/apps/weather/assets/icons/set2/" .. tostring(code or "999") .. ".png"
+end
+
+local function update_clock_weather_image()
+  if UI.clock_weather_img and lv_img_set_src then
+    pcall(lv_img_set_src, UI.clock_weather_img, weather_asset_path(S.weather_code))
+  end
+end
+
 local function draw_clock()
   if not UI.canvas then return end
   local cvs = UI.canvas
@@ -820,7 +845,6 @@ local function draw_clock()
   local temp = S.weather_temp and
     tostring(math_floor(S.weather_temp + 0.5)) .. "\194\176C" or "--\194\176C"
   draw_text(cvs, 52, 48, 118, temp, 0xFFC65C, 24, ALIGN_LEFT, 255)
-  weather_icon(cvs, 28, 54, S.weather_code)
   draw_cjk_text(cvs, 52, 79, 150, S.weather_text, C.sub, 13, ALIGN_LEFT, 255)
 
   local clock, date = dashboard_clock()
@@ -834,9 +858,12 @@ end
 redraw = function()
   if not UI.canvas then return end
   if S.mode == "clock" then
+    set_obj_hidden(UI.clock_weather_img, false)
+    update_clock_weather_image()
     draw_clock()
     return
   end
+  set_obj_hidden(UI.clock_weather_img, true)
   local frame = begin_frame(UI.canvas)
   if lv_canvas_fill_bg then
     pcall(lv_canvas_fill_bg, UI.canvas, C.bg, 255)
@@ -1457,6 +1484,16 @@ local function build_ui()
       UI.spectrum_canvas = lv_canvas_create(root, 300, 46)
     end
     call(lv_obj_set_pos, UI.spectrum_canvas, 10, 186)
+  end
+
+  if lv_img_create then
+    UI.clock_weather_img = lv_img_create(lv_scr_act())
+    call(lv_obj_set_pos, UI.clock_weather_img, 18, 44)
+    if lv_img_set_zoom then
+      call(lv_img_set_zoom, UI.clock_weather_img, 200)
+    end
+    update_clock_weather_image()
+    set_obj_hidden(UI.clock_weather_img, true)
   end
 
   UI.title_label = make_label(118, 48, 194, 22, C.text, ALIGN_LEFT)
