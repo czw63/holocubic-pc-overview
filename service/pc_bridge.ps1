@@ -265,6 +265,22 @@ function Get-MemoryUsage {
             total = [double]($total / 1024.0 / 1024.0)
         }
     } catch {
+        try {
+            Add-Type -AssemblyName Microsoft.VisualBasic
+            $info = New-Object Microsoft.VisualBasic.Devices.ComputerInfo
+            $totalBytes = [double]$info.TotalPhysicalMemory
+            $freeBytes = [double]$info.AvailablePhysicalMemory
+            if ($totalBytes -gt 0) {
+                $usedBytes = $totalBytes - $freeBytes
+                return @{
+                    pct = [double]($usedBytes / $totalBytes * 100.0)
+                    used = [double]($usedBytes / 1GB)
+                    total = [double]($totalBytes / 1GB)
+                }
+            }
+        } catch {
+            Write-BridgeDebug ("memory fallback failed: " + $_.Exception.Message)
+        }
         Write-BridgeDebug ("memory probe failed: " + $_.Exception.Message)
         return @{ pct = $null; used = $null; total = $null }
     }
