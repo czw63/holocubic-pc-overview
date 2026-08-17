@@ -690,6 +690,62 @@ local function weather_icon(cvs, x, y, code)
   end
 end
 
+local function weather_icon_large(cvs, x, y, code)
+  code = tostring(code or "999")
+  local sunny = code == "100" or code == "150"
+  local partly = code == "101" or code == "102" or code == "103" or
+    code == "151" or code == "152" or code == "153"
+  local rain = code:match("^3") ~= nil
+  local snow = code:match("^4") ~= nil
+  local fog = code:match("^5") ~= nil
+  local storm = code == "302" or code == "303" or code == "304"
+  local sky = 0xDCEEFF
+  local sun = 0xFFC65C
+
+  if sunny then
+    draw_arc_span(cvs, x + 16, y + 15, 8, 0, 359, code == "150" and 0xB7C7E8 or sun, 255, 3)
+    for a = 0, 315, 45 do
+      local r = a * math.pi / 180
+      draw_line(cvs, x + 16 + math.cos(r) * 12, y + 15 + math.sin(r) * 12,
+        x + 16 + math.cos(r) * 15, y + 15 + math.sin(r) * 15, sun, 255, 2)
+    end
+    return
+  end
+
+  if partly then
+    draw_arc_span(cvs, x + 11, y + 11, 5, 0, 359, sun, 255, 2)
+    draw_line(cvs, x + 11, y + 3, x + 11, y + 1, sun, 255, 2)
+    draw_line(cvs, x + 3, y + 11, x + 1, y + 11, sun, 255, 2)
+  end
+
+  if fog then
+    draw_arc_span(cvs, x + 16, y + 11, 8, 190, 160, sky, 255, 2)
+    draw_line(cvs, x + 5, y + 18, x + 27, y + 18, sky, 255, 2)
+    draw_line(cvs, x + 2, y + 23, x + 25, y + 23, 0x91A9BC, 255, 2)
+    draw_line(cvs, x + 7, y + 28, x + 29, y + 28, 0x91A9BC, 255, 2)
+    return
+  end
+
+  draw_arc_span(cvs, x + 12, y + 17, 7, 190, 170, sky, 255, 2)
+  draw_arc_span(cvs, x + 20, y + 15, 9, 180, 180, sky, 255, 2)
+  draw_line(cvs, x + 7, y + 20, x + 27, y + 20, sky, 255, 3)
+
+  if storm then
+    draw_line(cvs, x + 18, y + 21, x + 13, y + 29, sun, 255, 3)
+    draw_line(cvs, x + 13, y + 29, x + 19, y + 27, sun, 255, 3)
+    draw_line(cvs, x + 19, y + 27, x + 16, y + 34, sun, 255, 3)
+  elseif rain then
+    draw_line(cvs, x + 11, y + 25, x + 9, y + 32, 0x55CFFF, 255, 2)
+    draw_line(cvs, x + 19, y + 25, x + 17, y + 32, 0x55CFFF, 255, 2)
+    draw_line(cvs, x + 27, y + 25, x + 25, y + 32, 0x55CFFF, 255, 2)
+  elseif snow then
+    draw_line(cvs, x + 11, y + 25, x + 14, y + 29, sky, 255, 2)
+    draw_line(cvs, x + 14, y + 25, x + 11, y + 29, sky, 255, 2)
+    draw_line(cvs, x + 22, y + 25, x + 25, y + 29, sky, 255, 2)
+    draw_line(cvs, x + 25, y + 25, x + 22, y + 29, sky, 255, 2)
+  end
+end
+
 local function draw_music_placeholder(cvs, x, y, size)
   draw_rect(cvs, x + size * 0.18, y + size * 0.24, 5, size * 0.42, C.accent, 220, 1)
   draw_arc_span(cvs, x + size * 0.23, y + size * 0.66, size * 0.10, 0, 359, C.accent, 220, 3)
@@ -820,7 +876,7 @@ local function draw_clock()
   local temp = S.weather_temp and
     tostring(math_floor(S.weather_temp + 0.5)) .. "\194\176C" or "--\194\176C"
   draw_text(cvs, 52, 48, 118, temp, 0xFFC65C, 24, ALIGN_LEFT, 255)
-  weather_icon(cvs, 28, 54, S.weather_code)
+  weather_icon_large(cvs, 18, 43, S.weather_code)
   draw_cjk_text(cvs, 52, 79, 150, S.weather_text, C.sub, 13, ALIGN_LEFT, 255)
 
   local clock, date = dashboard_clock()
