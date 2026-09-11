@@ -77,6 +77,10 @@ SMOOTH_KEEP = 0.3
 SMOOTH_NEW = 0.7
 CURVE = 0.65
 
+# Seconds to finish a shutdown before walking out; keep it below the unit's
+# TimeoutStopSec so systemd never has to SIGKILL us.
+SHUTDOWN_GRACE = 4.0
+
 ARGV0 = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else "pc_bridge"
 
 
@@ -88,6 +92,25 @@ ARGV0 = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else "pc_bridg
 def log(message: str, *args: Any) -> None:
     text = message % args if args else message
     print("%s %s" % (time.strftime("[%H:%M:%S]"), text), flush=True)
+
+
+def sd_notify(state: str) -> None:
+    """Tell systemd we are ready / still alive.  No-op outside systemd."""
+    path = os.environ.get("NOTIFY_SOCKET")
+    if not path:
+        return
+    if path.startswith("@"):  # abstract namespace socket
+        path = "\0" + path[1:]
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(0.2)
+            sock.connect(path)
+            sock.sendall(state.encode("utf-8"))
+        finally:
+            sock.close()
+    except OSError:
+        pass
 
 
 def dumps(payload: Any) -> str:
@@ -804,6 +827,7 @@ class WsClient:
         self.loop = loop
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=16)
         self.closed = False
+        self.handler: Optional[asyncio.Task] = None
         self.task = loop.create_task(self._drain())
 
     def send(self, frame: bytes) -> None:
@@ -841,8 +865,8 @@ class WsClient:
         self.closed = True
         try:
             self.writer.write(ws_frame(0x8, b""))
-            await self.writer.drain()
-        except Exception:  # noqa: BLE001
+            await asyncio.wait_for(self.writer.drain(), timeout=1.0)
+        except Exception:  # noqa: BLE001 - includes timeout and a dead peer
             pass
         self.task.cancel()
 
@@ -928,17 +952,41 @@ class Bridge:
                 self.args.udp_port)
 
         loop_task = asyncio.create_task(self._state_loop())
+        watchdog_task = asyncio.create_task(self._watchdog_loop())
+        sd_notify("READY=1")
         try:
-            async with server:
-                await self._stop.wait()
+            await self._stop.wait()
         finally:
-            loop_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await loop_task
+            sd_notify("STOPPING=1")
+            server.close()
+            for task in (loop_task, watchdog_task):
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                    await asyncio.wait_for(task, timeout=1.0)
             for client in list(self._clients.values()):
-                await client.close()
+                # The per-client reader task is what makes Server.wait_closed()
+                # block, so cancel it too - and bound every wait, because a
+                # device that stopped reading must not be able to hang us past
+                # systemd's TimeoutStopSec.
+                if client.handler is not None:
+                    client.handler.cancel()
+                with contextlib.suppress(Exception, asyncio.TimeoutError):
+                    await asyncio.wait_for(client.close(), timeout=1.0)
             self._clients.clear()
+            with contextlib.suppress(Exception, asyncio.TimeoutError):
+                await asyncio.wait_for(server.wait_closed(), timeout=2.0)
         log("bridge stopped")
+
+    async def _watchdog_loop(self) -> None:
+        """Ping systemd so a wedged event loop gets restarted."""
+        raw = os.environ.get("WATCHDOG_USEC")
+        try:
+            interval = max(1.0, float(raw) / 1_000_000.0 / 3.0)
+        except (TypeError, ValueError):
+            return
+        while True:
+            sd_notify("WATCHDOG=1")
+            await asyncio.sleep(interval)
 
     def shutdown(self) -> None:
         if self.spectrum:
@@ -1286,11 +1334,10 @@ class Bridge:
             pass
 
     async def _close(self, writer: asyncio.StreamWriter) -> None:
-        try:
+        with contextlib.suppress(Exception):
             writer.close()
-            await writer.wait_closed()
-        except Exception:  # noqa: BLE001
-            pass
+        with contextlib.suppress(Exception, asyncio.TimeoutError):
+            await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
 
     # -- websocket ---------------------------------------------------------
     async def _serve_ws(
@@ -1316,6 +1363,7 @@ class Bridge:
         await writer.drain()
 
         client = WsClient(writer, ip, asyncio.get_running_loop())
+        client.handler = asyncio.current_task()
         client_id = self._next_client_id
         self._next_client_id += 1
         self._clients[client_id] = client
@@ -1456,19 +1504,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    def request_stop(*_args: Any) -> None:
+    def force_exit() -> None:
+        log("shutdown did not finish in %.0fs, exiting anyway", SHUTDOWN_GRACE)
+        os._exit(0)
+
+    def request_stop(signum: Any = None, *_args: Any) -> None:
+        label = "stop"
+        if isinstance(signum, int):
+            try:
+                label = signal.Signals(signum).name
+            except ValueError:
+                label = str(signum)
+        log("received %s, shutting down", label)
         stop = getattr(bridge, "_stop", None)
         if stop is not None and not stop.is_set():
             stop.set()
         else:
             loop.stop()
+        guard = threading.Timer(SHUTDOWN_GRACE, force_exit)
+        guard.daemon = True
+        guard.start()
 
     for signal_name in ("SIGTERM", "SIGINT"):
         signum = getattr(signal, signal_name, None)
         if signum is None:
             continue
         try:
-            loop.add_signal_handler(signum, request_stop)
+            loop.add_signal_handler(signum, request_stop, signum)
         except NotImplementedError:
             pass
 

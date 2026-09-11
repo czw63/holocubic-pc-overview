@@ -68,6 +68,23 @@ loginctl enable-linger "$USER"
 With lingering enabled the bridge comes back after a reboot even before anyone
 logs in, and `journalctl --user -u holocubic-bridge -f` shows the logs.
 
+### Keeping It Alive
+
+The shipped unit is built so the bridge does not quietly disappear:
+
+| Setting | Why |
+| --- | --- |
+| `Type=notify` + `WatchdogSec=90` | The bridge pings systemd every 30 s; a wedged event loop gets restarted instead of hanging forever |
+| `Restart=always`, `RestartSec=2` | Any crash comes straight back |
+| `StartLimitIntervalSec=0` | systemd never gives up, however often it crashes |
+| no `PartOf=graphical-session.target` | Switching between Plasma and Steam Game Mode tears that target down; the bridge now keeps serving the cube across the switch |
+
+That last one is worth remembering: with `PartOf=`, a Plasma to Game Mode switch
+stops the unit as part of the session teardown, and because a *stop* is not a
+crash, `Restart=always` does not bring it back - the cube just goes dark until
+you start it by hand.  `systemctl --user status holocubic-bridge` is the fastest
+way to check, and `systemctl --user show -p PartOf` should print nothing.
+
 ### Firewall
 
 The device connects to this PC for everything except the spectrum, so port
