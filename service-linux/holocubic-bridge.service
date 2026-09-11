@@ -1,0 +1,34 @@
+# HoloCubic PC Overview bridge (Linux) - systemd user unit
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp holocubic-bridge.service ~/.config/systemd/user/
+#   # edit ExecStart below so it points at your checkout
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now holocubic-bridge.service
+#   loginctl enable-linger "$USER"      # keep it running with no graphical session
+#
+# Logs: journalctl --user -u holocubic-bridge -f
+
+[Unit]
+Description=HoloCubic PC Overview bridge (MPRIS + PipeWire spectrum)
+Documentation=https://github.com/czw63/holocubic-pc-overview
+# The MPRIS (session D-Bus) and PipeWire pieces only exist inside a user session.
+After=graphical-session.target pipewire.service pipewire-pulse.service
+PartOf=graphical-session.target
+Wants=pipewire.service pipewire-pulse.service
+
+[Service]
+Type=simple
+# EDIT THIS PATH to where the repository lives.
+ExecStart=/usr/bin/python3 %h/.local/share/holocubic-pc-overview/service-linux/pc_bridge.py
+WorkingDirectory=%h
+Environment=PYTHONUNBUFFERED=1
+# Loopback capture is read from the default sink monitor; override if needed:
+#   ExecStart=... pc_bridge.py --spectrum-source alsa_output.pci-0000_00_1f.3.analog-stereo.monitor
+Restart=always
+RestartSec=3
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

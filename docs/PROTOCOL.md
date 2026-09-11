@@ -1,5 +1,9 @@
 # Protocol
 
+Both bridges implement this protocol: `service/` on Windows (SMTC + WASAPI) and
+`service-linux/` on Linux (MPRIS + PipeWire/PulseAudio). The device app only
+sees the HTTP/WebSocket/UDP surface described here.
+
 ## HTTP
 
 The bridge exposes these endpoints:

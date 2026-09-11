@@ -1,14 +1,16 @@
 # HoloCubic PC Overview
 
-A 320x240 HoloCubic app plus a self-contained Windows bridge that turns the
-cube into a PC status display:
+A 320x240 HoloCubic app plus a self-contained PC bridge (Windows or Linux) that
+turns the cube into a status display:
 
-- SMTC music title, artist, album, player name and 96x96 album cover
-- CPU, GPU and RAM usage from the Windows machine
+- Music title, artist, album, player name and 96x96 album cover (SMTC on
+  Windows, MPRIS on Linux)
+- CPU, GPU and RAM usage from the PC
 - Local weather from the built-in CubicServer weather API
 - Local time and date
-- Live WASAPI spectrum with smooth local bar rendering; when Salt Player for
-  Windows is running, only its audio process is captured
+- Live spectrum with smooth local bar rendering (WASAPI loopback on Windows,
+  PipeWire/PulseAudio sink monitor on Linux); when Salt Player for Windows is
+  running, only its audio process is captured
 
 中文文档：[README_ZH.md](README_ZH.md)
 
@@ -18,10 +20,11 @@ cube into a PC status display:
 
 ```text
 holocubic-pc-overview/
-  package/   HoloCubic app, deploy to /sd/apps/pc_overview/
-  service/   Windows bridge: SMTC, system metrics, WASAPI spectrum
-  spw-plugin/ Salt Player for Windows plugin prototype
-  docs/      Protocol and performance notes
+  package/        HoloCubic app, deploy to /sd/apps/pc_overview/
+  service/        Windows bridge: SMTC, system metrics, WASAPI spectrum
+  service-linux/  Linux bridge: MPRIS, /proc metrics, PipeWire spectrum
+  spw-plugin/     Salt Player for Windows plugin prototype
+  docs/           Protocol and performance notes
   preview_320x240.png
 ```
 
@@ -60,6 +63,21 @@ app must publish SMTC metadata; most desktop players do.
 For spectrum capture, the bridge automatically targets the `Salt Player for
 Windows` process tree when it is running. Otherwise it falls back to the
 default WASAPI render endpoint.
+
+## Linux Bridge
+
+`service-linux/pc_bridge.py` speaks the same protocol, so the same device app
+works without changes. No vendor plugins are needed: music comes from MPRIS, so
+Spotify, Firefox, mpv, VLC and friends all report metadata out of the box.
+
+```sh
+python3 service-linux/pc_bridge.py          # HTTP on 0.0.0.0:8088
+python3 service-linux/pc_bridge.py --list-players
+```
+
+Requires `python-dbus`, `parec` (pulseaudio-utils), Pillow, and optionally
+NumPy plus ffmpeg. A systemd user unit and a mock MPRIS player for testing live
+in `service-linux/`, see [service-linux/README.md](service-linux/README.md).
 
 ## Performance
 

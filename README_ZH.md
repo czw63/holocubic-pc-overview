@@ -1,17 +1,19 @@
 # HoloCubic PC Overview（中文文档）
 
 把 320x240 的 HoloCubic 变成一块 PC 状态屏：显示正在播放的音乐、CPU/GPU/内存占用、本地天气、时间和实时频谱。
+PC 端桥接有 Windows 和 Linux 两套实现，协议一致，设备端同一个 App 通用。
 
 ![预览](preview_320x240.png)
 
 ## 功能
 
-- SMTC 音乐信息：歌名、歌手、专辑、播放器名称
+- 音乐信息：歌名、歌手、专辑、播放器名称（Windows 走 SMTC，Linux 走 MPRIS）
 - 96x96 RGB565 专辑封面，切歌后先刷新文字、再异步刷新封面
 - CPU、GPU、内存占用，每秒更新，采样不阻塞主循环
 - 本地天气：复用设备内置 CubicServer 天气接口
 - 时间和日期，支持时区配置
 - 实时频谱：32 个频段柱状图，通过 UDP 发送 32 字节数据，设备端本地绘制
+  （Windows 抓 WASAPI 回环，Linux 抓 PipeWire/PulseAudio 的 sink monitor）
 - SPW（Salt Player for Windows）插件：提供精确曲目元数据和音频文件路径
 - 离线天气时钟：与 PC 断开 10 分钟后在应用内部自动切换为大时间天气时钟，
   重新连接后自动切回仪表盘
@@ -23,6 +25,7 @@
 holocubic-pc-overview/
   package/        设备端 Lua 应用，部署到 /sd/apps/pc_overview/
   service/        Windows 桥接服务（SMTC、系统指标、WASAPI 频谱）
+  service-linux/  Linux 桥接服务（MPRIS、/proc 指标、PipeWire 频谱）
   spw-plugin/     Salt Player for Windows 插件原型
   docs/           协议、性能、SPW 集成文档
   README.md       英文说明
@@ -79,6 +82,39 @@ ws://<pc-ip>:8088/ws        状态和频谱 WebSocket
 
 需要在 Windows 防火墙中放行 8088（专用网络）。音乐软件需要提供 SMTC
 元数据，绝大多数桌面播放器都支持。
+
+### Linux 端
+
+Linux 版桥接是同一套协议的 Python 实现，设备端 App 不用改。音乐信息来自
+MPRIS，所以 Spotify、Firefox、mpv、VLC 等播放器开箱可用，不需要 SPW 之类
+的插件；频谱抓默认输出设备的 monitor，等价于 Windows 端的默认回环。
+
+```sh
+python3 service-linux/pc_bridge.py                 # 监听 0.0.0.0:8088
+python3 service-linux/pc_bridge.py --list-players  # 看看当前能识别到哪些播放器
+python3 service-linux/pc_bridge.py --no-spectrum   # 只要仪表盘，不抓声音
+```
+
+依赖 `python-dbus`、`parec`（pulseaudio-utils）、Pillow，可选 NumPy 和
+ffmpeg。Arch / CachyOS 上：
+
+```sh
+sudo pacman -S python-dbus python-pillow python-numpy pulseaudio-utils
+```
+
+后台常驻用 systemd 用户服务：
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp service-linux/holocubic-bridge.service ~/.config/systemd/user/
+$EDITOR ~/.config/systemd/user/holocubic-bridge.service   # 改 ExecStart 路径
+systemctl --user daemon-reload
+systemctl --user enable --now holocubic-bridge.service
+loginctl enable-linger "$USER"
+```
+
+细节、单应用频谱抓取的做法和与 Windows 版的差异见
+[service-linux/README.md](service-linux/README.md)。
 
 ### SPW 插件（可选）
 
@@ -339,6 +375,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File service\pc_bridge.ps1 -S
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：性能优化记录
 - [docs/SPW_INTEGRATION.md](docs/SPW_INTEGRATION.md)：SPW 集成研究
 - [service/README.md](service/README.md)：桥接运行说明
+- [service-linux/README.md](service-linux/README.md)：Linux 桥接说明
 - [spw-plugin/README.md](spw-plugin/README.md)：SPW 插件说明
 
 ## 离线天气钟

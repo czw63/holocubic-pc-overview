@@ -20,3 +20,7 @@ Thumbs.db
 # Local scratch files
 *_wtest.txt
 tmp/
+
+# Python bytecode (service-linux)
+__pycache__/
+*.pyc
