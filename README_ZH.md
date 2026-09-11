@@ -92,8 +92,14 @@ MPRIS，所以 Spotify、Firefox、mpv、VLC 等播放器开箱可用，不需�
 ```sh
 python3 service-linux/pc_bridge.py                 # 监听 0.0.0.0:8088
 python3 service-linux/pc_bridge.py --list-players  # 看看当前能识别到哪些播放器
+python3 service-linux/pc_bridge.py --print-metrics 5   # 自检 CPU/GPU/内存读数
 python3 service-linux/pc_bridge.py --no-spectrum   # 只要仪表盘，不抓声音
 ```
+
+系统指标与 Windows 版一致：CPU 取 `/proc/stat` 全核平均，内存取
+`MemTotal - MemAvailable`（和 `free` 的 used、任务管理器的口径相同），
+GPU 取 amdgpu 的 `gpu_busy_percent`（多卡时报最忙的一张，可用 `--gpu card1`
+指定），NVIDIA 走 `nvidia-smi`。
 
 依赖 `python-dbus`、`parec`（pulseaudio-utils）、Pillow，可选 NumPy 和
 ffmpeg。Arch / CachyOS 上：

@@ -48,7 +48,9 @@ Useful flags:
 | `--spectrum-source auto` | `auto` = default sink monitor, or pass an explicit `<sink>.monitor` |
 | `--no-spectrum` | skip audio capture entirely (dashboard still works) |
 | `--player spotify` | prefer a player whose bus name or identity contains this text |
+| `--gpu card1` | report this GPU instead of the busiest one |
 | `--list-players` | print the MPRIS players visible right now and exit |
+| `--print-metrics 5` | print CPU/GPU/RAM once per second for 5 seconds and exit |
 | `--media-poll-ms 100` | MPRIS poll interval |
 
 ## Run It in the Background
@@ -66,6 +68,42 @@ With lingering enabled the bridge comes back after a reboot even before anyone
 logs in, and `journalctl --user -u holocubic-bridge -f` shows the logs.
 
 ## What Is Captured
+
+### System metrics
+
+The dashboard shows the same three numbers as the Windows bridge, read from a
+different place:
+
+| Field | Windows source | Linux source |
+| --- | --- | --- |
+| `cpu` | `\Processor(_Total)\% Processor Time` | `/proc/stat` delta, all cores averaged into one 0-100 number |
+| `mem` / `mem_used` / `mem_total` | `Win32_OperatingSystem` total minus free | `/proc/meminfo`: `MemTotal - MemAvailable`, in GiB |
+| `gpu` | sum of `\GPU Engine(*)\Utilization Percentage`, capped at 100 | `gpu_busy_percent` (amdgpu sysfs), `nvidia-smi` fallback |
+
+Notes:
+
+* **Memory uses "available", not "free".**  `MemTotal - MemAvailable` is the
+  same definition Task Manager and `free`'s `used` column use.  The naive
+  `MemTotal - MemFree` would report around 90 % on a healthy Linux desktop
+  because the page cache counts as used, which is not what the gauge should
+  show.
+* **Multi-GPU machines report the busiest card.**  Machines with an iGPU and a
+  dGPU expose two `gpu_busy_percent` files; the bridge takes the larger one so
+  the gauge follows whichever GPU is actually working.  Pin one explicitly with
+  `--gpu card1` (`--print-metrics` shows which file each number came from).
+* **No GPU counter?**  Intel GPUs and some older AMD kernels do not expose
+  `gpu_busy_percent` and have no `nvidia-smi`; the gauge then keeps its previous
+  value instead of dropping to zero.
+
+To check the numbers on any machine, including whether the GPU source is the
+one you expect:
+
+```sh
+python3 service-linux/pc_bridge.py --print-metrics 5
+# cpu=  4%  gpu= 98%  mem= 36%   8.2/22.6 GB  [/sys/class/drm/card1/device/gpu_busy_percent]
+```
+
+### Spectrum
 
 The spectrum follows the **default output device**, which is the Linux
 equivalent of the Windows bridge's default WASAPI loopback: everything the PC
@@ -101,14 +139,11 @@ The port keeps the Windows behaviour where it is observable:
   WebSocket client, with a `255.255.255.255` broadcast fallback when no client
   is connected yet.
 
-Two deliberate differences:
-
-* The Goertzel loop is replaced by an equivalent FFT magnitude per band when
-  NumPy is available, because 32 x 1024 sequential Goertzel steps per frame is
-  expensive in Python.  The amplitudes match (`|X|/N` for both), and the pure
-  Python Goertzel path is still there as a fallback.
-* GPU usage comes from `gpu_busy_percent` (AMD) or `nvidia-smi` (NVIDIA).  When
-  neither is available the field keeps its previous value.
+One deliberate difference: the Goertzel loop is replaced by an equivalent FFT
+magnitude per band when NumPy is available, because 32 x 1024 sequential
+Goertzel steps per frame is expensive in Python.  The amplitudes match
+(`|X|/N` for both), and the pure Python Goertzel path is still there as a
+fallback.
 
 ## Troubleshooting
 

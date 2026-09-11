@@ -113,14 +113,17 @@ def text(value: Any) -> str:
 class MetricsSampler:
     """Lightweight /proc reader, same three numbers the Windows sampler reports."""
 
-    def __init__(self) -> None:
+    def __init__(self, gpu_filter: str = "auto") -> None:
         self.cpu = 0.0
         self.gpu = 0.0
         self.mem = 0.0
         self.mem_used: Optional[float] = None
         self.mem_total: Optional[float] = None
+        self.gpu_filter = (gpu_filter or "auto").strip()
+        self.gpu_source = ""
         self._prev_cpu: Optional[tuple] = None
         self._nvidia: Optional[bool] = None
+        self._gpu_warned = False
 
     def sample(self) -> None:
         self._sample_cpu()
@@ -168,18 +171,37 @@ class MetricsSampler:
 
     # -- gpu ---------------------------------------------------------------
     def _sample_gpu(self) -> None:
-        try:
-            import glob
+        import glob
 
-            busy = [
-                int(open(path).read().strip())
-                for path in glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")
-            ]
-            if busy:
-                self.gpu = clamp(float(max(busy)), 0.0, 100.0)
+        paths = sorted(glob.glob("/sys/class/drm/card*/device/gpu_busy_percent"))
+        if paths:
+            chosen = paths
+            if self.gpu_filter not in ("auto", "max", ""):
+                wanted = [
+                    path for path in paths
+                    if path.startswith("/sys/class/drm/%s/" % self.gpu_filter)
+                ]
+                if wanted:
+                    chosen = wanted
+                elif not self._gpu_warned:
+                    log(
+                        "gpu %s has no gpu_busy_percent, using %s",
+                        self.gpu_filter,
+                        ", ".join(paths),
+                    )
+                    self._gpu_warned = True
+            readings = []
+            for path in chosen:
+                try:
+                    with open(path, "r") as handle:
+                        readings.append((int(handle.read().strip()), path))
+                except (OSError, ValueError):
+                    continue
+            if readings:
+                value, path = max(readings)
+                self.gpu_source = path
+                self.gpu = clamp(float(value), 0.0, 100.0)
                 return
-        except (OSError, ValueError):
-            pass
         self._sample_gpu_nvidia()
 
     def _sample_gpu_nvidia(self) -> None:
@@ -205,6 +227,7 @@ class MetricsSampler:
             ]
             if values:
                 self.gpu = clamp(max(values), 0.0, 100.0)
+                self.gpu_source = "nvidia-smi"
         except (OSError, ValueError, subprocess.SubprocessError):
             self._nvidia = False
 
@@ -782,7 +805,7 @@ class Bridge:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self.metrics = MetricsSampler()
+        self.metrics = MetricsSampler(args.gpu)
         self.media = MprisMedia(args.player)
         self.cover = CoverBuilder(debug=args.verbose)
         self.spectrum: Optional[SpectrumCapture] = None
@@ -1289,10 +1312,42 @@ def build_parser() -> argparse.ArgumentParser:
                         help="MPRIS poll interval in ms (default 100)")
     parser.add_argument("--player", default=None,
                         help="prefer a player whose bus name or identity contains this text")
+    parser.add_argument("--gpu", default="auto",
+                        help="GPU to report: 'auto' (busiest card) or a card name such as card1")
     parser.add_argument("--list-players", action="store_true",
                         help="print the MPRIS players visible right now and exit")
+    parser.add_argument("--print-metrics", nargs="?", const=5.0, default=None, type=float,
+                        metavar="SECONDS",
+                        help="print CPU/GPU/RAM once per second for SECONDS (default 5) and exit")
     parser.add_argument("--verbose", action="store_true", help="extra logging")
     return parser
+
+
+def print_metrics(args: argparse.Namespace) -> int:
+    """Debug helper: show what the bridge would report for CPU/GPU/RAM."""
+    sampler = MetricsSampler(args.gpu)
+    print("gpu filter: %s" % args.gpu)
+    sampler.sample()  # prime the /proc/stat delta
+    end = time.time() + max(1.0, float(args.print_metrics))
+    while time.time() < end:
+        time.sleep(1.0)
+        sampler.sample()
+        memory = (
+            "%4.1f/%4.1f GB" % (sampler.mem_used, sampler.mem_total)
+            if sampler.mem_used is not None
+            else "unavailable"
+        )
+        print(
+            "cpu=%3.0f%%  gpu=%3.0f%%  mem=%3.0f%%  %s  [%s]"
+            % (
+                sampler.cpu,
+                sampler.gpu,
+                sampler.mem,
+                memory,
+                sampler.gpu_source or "no gpu source",
+            )
+        )
+    return 0
 
 
 def list_players() -> int:
@@ -1319,6 +1374,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if args.list_players:
         return list_players()
+    if args.print_metrics is not None:
+        return print_metrics(args)
 
     bridge = Bridge(args)
     loop = asyncio.new_event_loop()
