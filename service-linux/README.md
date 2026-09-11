@@ -47,6 +47,7 @@ Useful flags:
 | `--udp-port 8090` | spectrum UDP port (`0` disables UDP) |
 | `--spectrum-source auto` | `auto` = default sink monitor, or pass an explicit `<sink>.monitor` |
 | `--no-spectrum` | skip audio capture entirely (dashboard still works) |
+| `--spectrum-always` | keep capturing and broadcasting with no client connected (Windows behaviour) |
 | `--player spotify` | prefer a player whose bus name or identity contains this text |
 | `--gpu card1` | report this GPU instead of the busiest one |
 | `--list-players` | print the MPRIS players visible right now and exit |
@@ -66,6 +67,22 @@ loginctl enable-linger "$USER"
 
 With lingering enabled the bridge comes back after a reboot even before anyone
 logs in, and `journalctl --user -u holocubic-bridge -f` shows the logs.
+
+### Firewall
+
+The device connects to this PC, so the two ports have to be reachable from your
+LAN.  A default-deny firewall (ufw's `DEFAULT_INPUT_POLICY="DROP"`, firewalld's
+public zone, ...) blocks them, and the symptom is a device that stays
+`WAITING` while the browser test page works fine on the PC itself - traffic to
+your own address goes over `lo`, which firewalls always allow.
+
+```sh
+sudo ufw allow 8088/tcp comment 'HoloCubic PC Overview bridge'
+sudo ufw allow 8090/udp comment 'HoloCubic spectrum'
+```
+
+Only the HTTP/WebSocket port is strictly required; 8090/udp carries the
+spectrum, which the bridge also sends over the WebSocket as a fallback.
 
 ## What Is Captured
 
@@ -108,6 +125,13 @@ python3 service-linux/pc_bridge.py --print-metrics 5
 The spectrum follows the **default output device**, which is the Linux
 equivalent of the Windows bridge's default WASAPI loopback: everything the PC
 plays is visible on the cube.
+
+It only runs while something is watching.  The capture stream stays open (that
+costs almost nothing) but the FFT and the datagrams are skipped until a device
+connects, and pause again 10 seconds after the last `/state` request or
+WebSocket disconnects.  Idle cost drops from roughly 4 % CPU plus a permanent
+50 packets/s LAN broadcast to about 0.4 % and no traffic.  `--spectrum-always`
+restores the always-on behaviour.
 
 Single-application capture has no direct equivalent because PipeWire mixes into
 one sink.  Two options that work:

@@ -534,11 +534,15 @@ class CoverBuilder:
 class SpectrumCapture(threading.Thread):
     """PipeWire/PulseAudio loopback capture, mirroring ``audio_capture.cs``."""
 
-    def __init__(self, source: str, on_bins, debug: bool = False) -> None:
+    def __init__(self, source: str, on_bins, debug: bool = False, is_wanted=None) -> None:
         super().__init__(name="spectrum-capture", daemon=True)
         self.source = source
         self.on_bins = on_bins
         self.debug = debug
+        # ``is_wanted`` lets the bridge pause the spectrum while nothing is
+        # listening.  The capture stream stays open (that is nearly free), only
+        # the FFT and the datagrams are skipped.
+        self.is_wanted = is_wanted or (lambda: True)
         self.error = ""
         self.running = True
         self._proc: Optional[subprocess.Popen] = None
@@ -624,6 +628,11 @@ class SpectrumCapture(threading.Thread):
             self._feed(chunk)
 
     def _feed(self, chunk: bytes) -> None:
+        if not self.is_wanted():
+            self._buffer.clear()
+            if any(self._smooth):
+                self._smooth = [0.0] * SPECTRUM_BINS
+            return
         usable = len(chunk) - (len(chunk) % (CAPTURE_CHANNELS * 2))
         if usable <= 0:
             return
@@ -845,6 +854,9 @@ class Bridge:
         self._clients: Dict[int, WsClient] = {}
         self._next_client_id = 1
         self._udp: Optional[socket.socket] = None
+        # Any request (device polling /state, a WebSocket, curl) counts as an
+        # audience; the spectrum pauses a few seconds after the last one leaves.
+        self._last_client_seen = 0.0
 
     # -- lifecycle ---------------------------------------------------------
     async def run(self) -> None:
@@ -854,7 +866,10 @@ class Bridge:
             self._open_udp()
         if not self.args.no_spectrum:
             self.spectrum = SpectrumCapture(
-                self.args.spectrum_source, self._on_bins_threadsafe, self.args.verbose
+                self.args.spectrum_source,
+                self._on_bins_threadsafe,
+                self.args.verbose,
+                self._spectrum_wanted,
             )
             self.spectrum.start()
 
@@ -1014,6 +1029,11 @@ class Bridge:
         self._broadcast_text(dumps(state))
 
     # -- spectrum ----------------------------------------------------------
+    def _spectrum_wanted(self) -> bool:
+        if self.args.spectrum_always or self._clients:
+            return True
+        return (time.monotonic() - self._last_client_seen) < 10.0
+
     def _on_bins_threadsafe(self, bins: Sequence[float]) -> None:
         if self.loop is None:
             return
@@ -1096,6 +1116,11 @@ class Bridge:
         if "?" in path:
             path, _, query = path.partition("?")
 
+        # Anything that looks like a device or a viewer keeps the spectrum
+        # running; /health is a diagnostic endpoint and must not wake it up.
+        if path != "/health":
+            self._last_client_seen = time.monotonic()
+
         if headers.get("upgrade", "").lower() == "websocket" and path == "/ws":
             await self._serve_ws(reader, writer, headers, ip)
             return
@@ -1152,6 +1177,8 @@ class Bridge:
                     "ok": True,
                     "clients": len(self._clients),
                     "spectrum_sent": self.spectrum_sent,
+                    "spectrum_active": self._spectrum_wanted(),
+                    "spectrum_frames": self.spectrum.frames if self.spectrum else 0,
                     "udp_sent": self.udp_sent,
                     "audio": audio,
                     "audio_error": (self.spectrum.error[:300] if self.spectrum else ""),
@@ -1304,6 +1331,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-udp-broadcast", action="store_true",
                         help="do not fall back to 255.255.255.255 when no client is connected")
     parser.add_argument("--no-spectrum", action="store_true", help="disable audio capture entirely")
+    parser.add_argument("--spectrum-always", action="store_true",
+                        help="capture and broadcast even with no client connected "
+                             "(Windows behaviour; costs CPU and LAN broadcast)")
     parser.add_argument("--spectrum-source", default="auto",
                         help="parec device, e.g. 'auto' (default sink monitor) or a monitor name")
     parser.add_argument("--spectrum-interval", type=float, default=0.02,
