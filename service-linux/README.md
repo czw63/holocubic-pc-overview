@@ -70,19 +70,31 @@ logs in, and `journalctl --user -u holocubic-bridge -f` shows the logs.
 
 ### Firewall
 
-The device connects to this PC, so the two ports have to be reachable from your
-LAN.  A default-deny firewall (ufw's `DEFAULT_INPUT_POLICY="DROP"`, firewalld's
-public zone, ...) blocks them, and the symptom is a device that stays
-`WAITING` while the browser test page works fine on the PC itself - traffic to
-your own address goes over `lo`, which firewalls always allow.
+The device connects to this PC for everything except the spectrum, so port
+**8088/tcp must be reachable from your LAN**:
 
 ```sh
 sudo ufw allow 8088/tcp comment 'HoloCubic PC Overview bridge'
-sudo ufw allow 8090/udp comment 'HoloCubic spectrum'
 ```
 
-Only the HTTP/WebSocket port is strictly required; 8090/udp carries the
-spectrum, which the bridge also sends over the WebSocket as a fallback.
+8090/udp needs no rule on this PC: the spectrum travels *outbound* (unicast to
+the device, or a 255.255.255.255 broadcast), and firewalls filter inbound
+traffic.  That asymmetry produces a very specific symptom worth remembering:
+
+> **The spectrum works but the CPU/GPU/RAM readouts stay blank.**
+
+The bars keep moving because the broadcast leaves this PC regardless of the
+firewall, while every `/state` fetch and the WebSocket connection are inbound
+and get dropped.  `sudo ufw status` shows whether 8088 is open; the bridge also
+prints a warning at startup when it detects a default-deny ufw without a rule
+for its port.
+
+Two more things that look similar and are not firewall problems:
+
+* A browser test on the PC itself always works, because traffic to your own
+  address goes over `lo`, which firewalls leave open.
+* If the device connects but only ever fetches `/state`, check the app version:
+  the app only polls state over HTTP when the WebSocket module is missing.
 
 ## What Is Captured
 

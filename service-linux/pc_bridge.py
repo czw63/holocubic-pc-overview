@@ -46,6 +46,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import socket
@@ -103,6 +104,47 @@ def text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def firewall_hint(port: int) -> str:
+    """Warn when a default-deny ufw setup is going to drop the device.
+
+    The device connects *to* this PC, so an inbound firewall rule is required.
+    A local browser test on the PC itself always works because that traffic
+    goes over ``lo``, which firewalls leave open - which makes this a
+    confusing failure to diagnose from the device side.
+    """
+    try:
+        with open("/etc/ufw/ufw.conf", "r") as handle:
+            if not re.search(r"^ENABLED=yes", handle.read(), re.M):
+                return ""
+    except OSError:
+        return ""
+
+    policy = ""
+    try:
+        with open("/etc/default/ufw", "r") as handle:
+            for line in handle:
+                if line.startswith("DEFAULT_INPUT_POLICY="):
+                    policy = line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        return ""
+    if policy != "DROP":
+        return ""
+
+    try:
+        with open("/etc/ufw/user.rules", "r") as handle:
+            rules = handle.read()
+    except OSError:
+        rules = ""
+    if re.search(r"--dports?\s+%d\b" % port, rules):
+        return ""
+    return (
+        "ufw is enabled with DEFAULT_INPUT_POLICY=DROP and no rule opens port %d, "
+        "so the device cannot reach this bridge (the spectrum still arrives "
+        "because it is broadcast outbound). Fix with:  sudo ufw allow %d/tcp"
+        % (port, port)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -878,6 +920,9 @@ class Bridge:
         )
         log("PC Overview bridge listening on %s:%d", self.args.bind, self.args.port)
         log("open http://localhost:%d/ to verify", self.args.port)
+        hint = firewall_hint(self.args.port)
+        if hint:
+            log("warning: %s", hint)
         if self.args.udp_port and not self.args.no_udp_broadcast:
             log("spectrum UDP target port %d (unicast to clients, broadcast fallback)",
                 self.args.udp_port)
