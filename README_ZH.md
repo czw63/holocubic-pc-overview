@@ -15,8 +15,6 @@ PC 端桥接有 Windows 和 Linux 两套实现，协议一致，设备端同一�
 - 实时频谱：32 个频段柱状图，通过 UDP 发送 32 字节数据，设备端本地绘制
   （Windows 抓 WASAPI 回环，Linux 抓 PipeWire/PulseAudio 的 sink monitor）
 - SPW（Salt Player for Windows）插件：提供精确曲目元数据和音频文件路径
-- 离线天气时钟：与 PC 断开 10 分钟后在应用内部自动切换为大时间天气时钟，
-  重新连接后自动切回仪表盘
 - 天气自动定位：未手动设置位置时按出口 IP 自动解析城市并获取天气
 
 ## 目录结构
@@ -27,6 +25,7 @@ holocubic-pc-overview/
   service/        Windows 桥接服务（SMTC、系统指标、WASAPI 频谱）
   service-linux/  Linux 桥接服务（MPRIS、/proc 指标、PipeWire 频谱）
   spw-plugin/     Salt Player for Windows 插件原型
+  weather-clock/  独立天气时钟应用（可选，与 pc-overview 不再自动切换）
   docs/           协议、性能、SPW 集成文档
   README.md       英文说明
   README_ZH.md    本文档
@@ -384,19 +383,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File service\pc_bridge.ps1 -S
 - [service-linux/README.md](service-linux/README.md)：Linux 桥接说明
 - [spw-plugin/README.md](spw-plugin/README.md)：SPW 插件说明
 
-## 离线天气钟
+## 天气钟（独立应用，可选）
 
-项目包含独立的 `weather-clock/` 应用。`pc-overview` 与电脑桥接断开满
-10 分钟后会启动 `pc-weather-clock`；天气钟检测到桥接恢复后会自动启动回
-`pc-overview`。两个 App 分开管理画面和资源，避免在运行中的 canvas 上动态
-叠加天气图片。
+`weather-clock/` 是一个独立的天气 + 时钟应用，部署到
+`/sd/apps/pc-weather-clock/` 后可以在启动器里手动打开。它复用设备已有的
+`weather` App 图标和字体资源，不依赖电脑。
 
-部署时同时复制：
-
-- `package/` 到 `/sd/apps/pc-overview/`
-- `weather-clock/` 到 `/sd/apps/pc-weather-clock/`
-
-然后重扫设备 App。天气钟会复用设备已有的 `weather` App 图标和字体资源。
+> **已移除：与 pc-overview 的互相自动切换。** 早期版本里 `pc-overview`
+> 断开 10 分钟后会 `app.launch` 到天气钟，天气钟检测到桥接恢复再切回来。
+> 这条路径交接时只设了 `state.stopped = true`，没有调用现成的
+> `state.stop()`，于是定时器、WebSocket/UDP socket 和 CJK 字体的句柄全部
+> 残留在内存里，紧接着新 App 又要加载自己的一套字体和 canvas，内存吃紧就
+> 会导致设备重启。天气钟自身那侧的 `poll_pc` 也有同样的问题。
+>
+> 现在推荐的做法是给 HoloCubic 用电脑的 USB 口供电：电脑关机即断电，设备
+> 跟着一起关，不需要软件层面再猜"电脑是不是离线了"。
 
 ## License
 

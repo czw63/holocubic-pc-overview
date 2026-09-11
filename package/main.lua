@@ -1,7 +1,6 @@
 local APP_DIR = "/sd/apps/pc_overview"
 local SETTINGS_PATH = "/sd/apps/settings.json"
 local DEFAULT_WEATHER_LOCATION = ""
-local IDLE_CLOCK_DELAY_MS = 10 * 60 * 1000
 local GEO_RETRY_MS = 30 * 60 * 1000
 
 if file and file.exists and not file.exists(APP_DIR .. "/config.lua") then
@@ -24,7 +23,6 @@ if _G.__pc_overview and _G.__pc_overview.stop then
 end
 
 local config = dofile(APP_DIR .. "/config.lua")
-IDLE_CLOCK_DELAY_MS = tonumber(config.idle_clock_delay_ms) or IDLE_CLOCK_DELAY_MS
 local PcWeb = nil
 
 if file and file.exists and file.exists(APP_DIR .. "/web.lua") then
@@ -71,9 +69,6 @@ local S = {
   status = "WAITING",
   status_color = C.warn,
   last_seen_ms = 0,
-  mode = "dashboard",
-  offline_since_ms = 0,
-  last_clock_redraw_ms = 0,
   cpu = nil,
   gpu = nil,
   mem = nil,
@@ -454,19 +449,6 @@ end
 
 local function update_music_labels()
   if not UI.title_label then return end
-  if S.mode == "clock" then
-    if S.title_shown ~= "" then
-      set_label_text(UI.title_label, "", pick_cjk_font("", 16))
-      set_label_text(UI.artist_label, "", pick_cjk_font("", 12))
-      set_label_text(UI.album_label, "", pick_cjk_font("", 12))
-      set_label_text(UI.app_label, "", FONT_SMALL)
-      S.title_shown = ""
-      S.artist_shown = ""
-      S.album_shown = ""
-      S.app_shown = ""
-    end
-    return
-  end
   local title = S.title ~= "" and S.title or (S.playing and "NOW PLAYING" or "NO MUSIC")
   if S.title_shown ~= title then
     S.title_shown = title
@@ -690,62 +672,6 @@ local function weather_icon(cvs, x, y, code)
   end
 end
 
-local function weather_icon_large(cvs, x, y, code)
-  code = tostring(code or "999")
-  local sunny = code == "100" or code == "150"
-  local partly = code == "101" or code == "102" or code == "103" or
-    code == "151" or code == "152" or code == "153"
-  local rain = code:match("^3") ~= nil
-  local snow = code:match("^4") ~= nil
-  local fog = code:match("^5") ~= nil
-  local storm = code == "302" or code == "303" or code == "304"
-  local sky = 0xDCEEFF
-  local sun = 0xFFC65C
-
-  if sunny then
-    draw_arc_span(cvs, x + 16, y + 15, 8, 0, 359, code == "150" and 0xB7C7E8 or sun, 255, 3)
-    for a = 0, 315, 45 do
-      local r = a * math.pi / 180
-      draw_line(cvs, x + 16 + math.cos(r) * 12, y + 15 + math.sin(r) * 12,
-        x + 16 + math.cos(r) * 15, y + 15 + math.sin(r) * 15, sun, 255, 2)
-    end
-    return
-  end
-
-  if partly then
-    draw_arc_span(cvs, x + 11, y + 11, 5, 0, 359, sun, 255, 2)
-    draw_line(cvs, x + 11, y + 3, x + 11, y + 1, sun, 255, 2)
-    draw_line(cvs, x + 3, y + 11, x + 1, y + 11, sun, 255, 2)
-  end
-
-  if fog then
-    draw_arc_span(cvs, x + 16, y + 11, 8, 190, 160, sky, 255, 2)
-    draw_line(cvs, x + 5, y + 18, x + 27, y + 18, sky, 255, 2)
-    draw_line(cvs, x + 2, y + 23, x + 25, y + 23, 0x91A9BC, 255, 2)
-    draw_line(cvs, x + 7, y + 28, x + 29, y + 28, 0x91A9BC, 255, 2)
-    return
-  end
-
-  draw_arc_span(cvs, x + 12, y + 17, 7, 190, 170, sky, 255, 2)
-  draw_arc_span(cvs, x + 20, y + 15, 9, 180, 180, sky, 255, 2)
-  draw_line(cvs, x + 7, y + 20, x + 27, y + 20, sky, 255, 3)
-
-  if storm then
-    draw_line(cvs, x + 18, y + 21, x + 13, y + 29, sun, 255, 3)
-    draw_line(cvs, x + 13, y + 29, x + 19, y + 27, sun, 255, 3)
-    draw_line(cvs, x + 19, y + 27, x + 16, y + 34, sun, 255, 3)
-  elseif rain then
-    draw_line(cvs, x + 11, y + 25, x + 9, y + 32, 0x55CFFF, 255, 2)
-    draw_line(cvs, x + 19, y + 25, x + 17, y + 32, 0x55CFFF, 255, 2)
-    draw_line(cvs, x + 27, y + 25, x + 25, y + 32, 0x55CFFF, 255, 2)
-  elseif snow then
-    draw_line(cvs, x + 11, y + 25, x + 14, y + 29, sky, 255, 2)
-    draw_line(cvs, x + 14, y + 25, x + 11, y + 29, sky, 255, 2)
-    draw_line(cvs, x + 22, y + 25, x + 25, y + 29, sky, 255, 2)
-    draw_line(cvs, x + 25, y + 25, x + 22, y + 29, sky, 255, 2)
-  end
-end
-
 local function draw_music_placeholder(cvs, x, y, size)
   draw_rect(cvs, x + size * 0.18, y + size * 0.24, 5, size * 0.42, C.accent, 220, 1)
   draw_arc_span(cvs, x + size * 0.23, y + size * 0.66, size * 0.10, 0, 359, C.accent, 220, 3)
@@ -839,11 +765,6 @@ local function redraw_spectrum()
   elseif lv_canvas_fill then
     pcall(lv_canvas_fill, UI.spectrum_canvas, C.bg, 255)
   end
-  if S.mode == "clock" then
-    end_frame(UI.spectrum_canvas, frame)
-    S.spectrum_dirty = false
-    return
-  end
   draw_spectrum(UI.spectrum_canvas)
   end_frame(UI.spectrum_canvas, frame)
   S.spectrum_dirty = false
@@ -860,39 +781,8 @@ local function draw_header(cvs)
   draw_cjk_text(cvs, 202, 7, 110, weather, 0xFFC65C, 12, ALIGN_LEFT, 255)
 end
 
-local function draw_clock()
-  if not UI.canvas then return end
-  local cvs = UI.canvas
-  local frame = begin_frame(cvs)
-  if lv_canvas_fill_bg then
-    pcall(lv_canvas_fill_bg, cvs, C.bg, 255)
-  elseif lv_canvas_fill then
-    pcall(lv_canvas_fill, cvs, C.bg, 255)
-  end
-  draw_text(cvs, 12, 10, 90, "OFFLINE", C.hot, 9, ALIGN_LEFT, 255)
-  draw_cjk_text(cvs, 118, 8, 190, S.weather_city, C.text, 12, ALIGN_RIGHT, 255)
-  draw_line(cvs, 12, 31, 308, 31, C.line, 255, 1)
-
-  local temp = S.weather_temp and
-    tostring(math_floor(S.weather_temp + 0.5)) .. "\194\176C" or "--\194\176C"
-  draw_text(cvs, 52, 48, 118, temp, 0xFFC65C, 24, ALIGN_LEFT, 255)
-  weather_icon_large(cvs, 18, 43, S.weather_code)
-  draw_cjk_text(cvs, 52, 79, 150, S.weather_text, C.sub, 13, ALIGN_LEFT, 255)
-
-  local clock, date = dashboard_clock()
-  draw_text(cvs, 8, 108, 304, clock, C.text, 54, ALIGN_CENTER, 255)
-  draw_text(cvs, 8, 178, 304, date, C.sub, 14, ALIGN_CENTER, 255)
-  draw_line(cvs, 96, 210, 224, 210, C.line, 255, 1)
-  draw_text(cvs, 8, 218, 304, "PC OVERVIEW", C.dim, 8, ALIGN_CENTER, 255)
-  end_frame(cvs, frame)
-end
-
 redraw = function()
   if not UI.canvas then return end
-  if S.mode == "clock" then
-    draw_clock()
-    return
-  end
   local frame = begin_frame(UI.canvas)
   if lv_canvas_fill_bg then
     pcall(lv_canvas_fill_bg, UI.canvas, C.bg, 255)
@@ -1084,10 +974,6 @@ local function handle_state(doc)
   S.last_seen_ms = now_ms()
   S.status = "LIVE"
   S.status_color = C.gpu
-  if S.mode == "clock" then
-    S.mode = "dashboard"
-    S.offline_since_ms = 0
-  end
 end
 
 local function handle_ws_message(payload)
@@ -1152,10 +1038,6 @@ local function connect_ws()
       S.status = "LIVE"
       S.status_color = C.gpu
       S.last_seen_ms = now_ms()
-      if S.mode == "clock" then
-        S.mode = "dashboard"
-        S.offline_since_ms = 0
-      end
       log("ws_connected")
       pcall(function()
         client:send("{\"type\":\"hello\"}", websocket.TEXT)
@@ -1297,39 +1179,6 @@ local function update_stale_status()
   end
 end
 
-local function update_idle_mode()
-  local now = now_ms()
-  if S.status == "OFFLINE" then
-    if S.offline_since_ms == 0 then
-      S.offline_since_ms = now
-    end
-    if S.mode == "dashboard" and now - S.offline_since_ms >= IDLE_CLOCK_DELAY_MS then
-      if app and app.launch then
-        local ok, launched = pcall(app.launch, "pc-weather-clock")
-        if ok and launched ~= false then
-          state.stopped = true
-          return
-        end
-      end
-      S.mode = "clock"
-      S.last_clock_redraw_ms = now
-      redraw()
-    end
-  elseif S.status == "LIVE" then
-    S.offline_since_ms = 0
-    if S.mode == "clock" then
-      S.mode = "dashboard"
-      redraw()
-    end
-  else
-    S.offline_since_ms = 0
-  end
-  if S.mode == "clock" and now - S.last_clock_redraw_ms >= 5000 then
-    S.last_clock_redraw_ms = now
-    redraw()
-  end
-end
-
 local function start_tick()
   if not tmr or not tmr.create then return end
   state.tick_timer = tmr.create()
@@ -1348,7 +1197,6 @@ local function start_tick()
       end
     end
     update_stale_status()
-    update_idle_mode()
     if S.ws_connected and now_ms() - S.last_seen_ms > (config.stale_ms or 5000) then
       S.status = "STALE"
       S.status_color = C.warn
@@ -1603,7 +1451,6 @@ if PcWeb and PcWeb.new then
         cover_bytes = #(S.cover_data or ""),
         cover_inflight = S.cover_inflight,
         app_status = S.status,
-        app_mode = S.mode,
         spectrum_frames = S.spectrum_frames or 0,
         spectrum_udp_frames = S.spectrum_udp_frames or 0,
         spectrum_frame_len = S.spectrum_frame_len or 0,

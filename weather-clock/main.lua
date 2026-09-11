@@ -1,6 +1,5 @@
 local APP_ID = "pc-weather-clock"
 local SETTINGS_PATH = "/sd/apps/settings.json"
-local PC_CONFIG_PATH = "/sd/apps/pc-overview/config.lua"
 local WEATHER_ASSET = "S:/apps/weather/assets/icons/set2/"
 local WEATHER_FONT_ZH_12 = "/sd/apps/weather/font/weather_ui_zh_cn_12.bin"
 local WEATHER_FONT_ZH_16 = "/sd/apps/weather/font/weather_ui_zh_cn_16.bin"
@@ -46,13 +45,6 @@ local function now_ms()
   return 0
 end
 
-local function load_config()
-  local ok, config = pcall(dofile, PC_CONFIG_PATH)
-  if ok and type(config) == "table" then return config end
-  return { host = "192.168.1.100", port = 8088 }
-end
-
-local config = load_config()
 local settings = json_decode(read_file(SETTINGS_PATH)) or {}
 local weather_id = trim(settings.weather_location_id)
 local weather_address = trim(settings.weather_address or settings.weatherAddress)
@@ -62,10 +54,8 @@ if weather_city == "" then weather_city = weather_address ~= "" and weather_addr
 local state = {
   stopped = false,
   clock_timer = nil,
-  poll_timer = nil,
   weather_timer = nil,
   weather_request = false,
-  pc_request = false,
   weather = "--",
   temp = nil,
   icon = "999",
@@ -205,21 +195,6 @@ local function request_weather()
     end)
 end
 
-local function poll_pc()
-  if state.stopped or state.pc_request or not http then return end
-  state.pc_request = true
-  local host = trim(config.host)
-  local port = tonumber(config.port) or 8088
-  http.get("http://" .. host .. ":" .. port .. "/state", {}, function(status)
-    state.pc_request = false
-    if state.stopped then return end
-    if status == 200 and app and app.launch then
-      pcall(app.launch, "pc-overview")
-      state.stopped = true
-    end
-  end)
-end
-
 local function build_ui()
   local root = lv_scr_act()
   state.root = root
@@ -247,7 +222,7 @@ local function build_ui()
   make_line(root, 82, 204, 156, C.line)
   local footer = make_label(root, 8, 214, 304, 16, state.tiny_font, C.sub, ALIGN_CENTER)
   set_text(state.status_label, "PC OFFLINE")
-  set_text(footer, "AUTO RETURN ON RECONNECT")
+  set_text(footer, "PC OVERVIEW")
   if lv_img_create then
     state.icon_img = lv_img_create(root)
     if lv_obj_set_pos then pcall(lv_obj_set_pos, state.icon_img, 18, 42) end
@@ -262,7 +237,7 @@ end
 
 local function stop()
   state.stopped = true
-  for _, timer in pairs({ state.clock_timer, state.poll_timer, state.weather_timer }) do
+  for _, timer in pairs({ state.clock_timer, state.weather_timer }) do
     if timer then pcall(function() timer:unregister() end) end
   end
   if lv_font_free then
@@ -279,8 +254,6 @@ request_weather()
 if tmr and tmr.create then
   state.clock_timer = tmr.create()
   state.clock_timer:alarm(1000, tmr.ALARM_AUTO, update_clock)
-  state.poll_timer = tmr.create()
-  state.poll_timer:alarm(1000, tmr.ALARM_AUTO, poll_pc)
   state.weather_timer = tmr.create()
   state.weather_timer:alarm(60000, tmr.ALARM_AUTO, request_weather)
 end
